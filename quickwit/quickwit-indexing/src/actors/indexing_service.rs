@@ -798,6 +798,7 @@ mod tests {
     use quickwit_ingest::{init_ingest_api, CreateQueueIfNotExistsRequest};
     use quickwit_metastore::{metastore_for_test, MockMetastore};
     use quickwit_proto::indexing::IndexingTask;
+    use quickwit_proto::DeleteIndexRequest;
 
     use super::*;
 
@@ -1153,7 +1154,10 @@ mod tests {
         );
 
         // Delete index and apply empty plan
-        metastore.delete_index(index_uid).await.unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.into(),
+        };
+        metastore.delete_index(request).await.unwrap();
         indexing_service
             .ask_for_res(ApplyIndexingPlanRequest {
                 indexing_tasks: Vec::new(),
@@ -1404,6 +1408,9 @@ mod tests {
         indexing_server.run_ingest_api_queues_gc().await.unwrap();
         assert_eq!(indexing_server.counters.num_deleted_queues, 0);
 
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone(),
+        };
         metastore.delete_index(index_uid).await.unwrap();
 
         indexing_server.run_ingest_api_queues_gc().await.unwrap();

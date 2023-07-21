@@ -40,7 +40,7 @@ use quickwit_proto::metastore::{
 };
 use quickwit_proto::tonic::codegen::InterceptedService;
 use quickwit_proto::tonic::Status;
-use quickwit_proto::{IndexUid, SpanContextInterceptor};
+use quickwit_proto::{DeleteIndexResponse, IndexUid, SourceResponse, SpanContextInterceptor};
 use tower::timeout::error::Elapsed;
 
 use crate::checkpoint::IndexCheckpointDelta;
@@ -197,17 +197,16 @@ impl Metastore for MetastoreGrpcClient {
     }
 
     /// Deletes an index.
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
-        let request = DeleteIndexRequest {
-            index_uid: index_uid.to_string(),
-        };
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
         self.underlying
             .clone()
             .delete_index(request)
             .await
             .map(|tonic_response| tonic_response.into_inner())
-            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
-        Ok(())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
     }
 
     /// Stages several splits.
@@ -383,58 +382,36 @@ impl Metastore for MetastoreGrpcClient {
     }
 
     /// Toggles the source `enabled` field value.
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
-        let request = ToggleSourceRequest {
-            index_uid: index_uid.into(),
-            source_id: source_id.to_string(),
-            enable,
-        };
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
         self.underlying
             .clone()
             .toggle_source(request)
             .await
             .map(|tonic_response| tonic_response.into_inner())
-            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
-        Ok(())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
     }
 
     /// Removes a source from a given index.
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
-        let request = DeleteSourceRequest {
-            index_uid: index_uid.into(),
-            source_id: source_id.to_string(),
-        };
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
         self.underlying
             .clone()
             .delete_source(request)
             .await
             .map(|tonic_response| tonic_response.into_inner())
-            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
-        Ok(())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
     }
 
     /// Resets a source checkpoint.
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
-        let request = ResetSourceCheckpointRequest {
-            index_uid: index_uid.into(),
-            source_id: source_id.to_string(),
-        };
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
         self.underlying
             .clone()
             .reset_source_checkpoint(request)
             .await
             .map(|tonic_response| tonic_response.into_inner())
-            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
-        Ok(())
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))
     }
 
     async fn last_delete_opstamp(&self, index_uid: IndexUid) -> MetastoreResult<u64> {

@@ -33,7 +33,10 @@ use quickwit_config::{
 };
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPoolOptions};
 use sqlx::{ConnectOptions, Pool, Postgres, Transaction};
@@ -482,18 +485,22 @@ impl Metastore for PostgresqlMetastore {
         Ok(index_metadata.index_uid)
     }
 
-    #[instrument(skip(self), fields(index_id=index_uid.index_id()))]
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
+    #[instrument(skip(self), fields(index_id=request.index_uid))]
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
         let delete_res = sqlx::query("DELETE FROM indexes WHERE index_uid = $1")
-            .bind(index_uid.to_string())
+            .bind(&request.index_uid)
             .execute(&self.connection_pool)
             .await?;
         if delete_res.rows_affected() == 0 {
+            let index_uid: IndexUid = request.index_uid.into();
             return Err(MetastoreError::IndexDoesNotExist {
                 index_id: index_uid.index_id().to_string(),
             });
         }
-        Ok(())
+        Ok(DeleteIndexResponse {})
     }
 
     #[instrument(skip(self, split_metadata_list), fields(split_ids))]
@@ -939,45 +946,44 @@ impl Metastore for PostgresqlMetastore {
         })
     }
 
-    #[instrument(skip(self), fields(index_id=index_uid.index_id(), source_id=source_id))]
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
+    #[instrument(skip(self), fields(index_id=request.index_uid, source_id=request.source_id))] // FIXME
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
+
         run_with_tx!(self.connection_pool, tx, {
             mutate_index_metadata(tx, index_uid, |index_metadata| {
-                index_metadata.toggle_source(source_id, enable)
+                index_metadata.toggle_source(&request.source_id, request.enable)
             })
             .await?;
-            Ok(())
+            Ok(SourceResponse {})
         })
     }
 
-    #[instrument(skip(self), fields(index_id=index_uid.index_id(), source_id=source_id))]
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
+    #[instrument(skip(self), fields(index_id=request.index_uid, source_id=request.source_id))] // FIXME
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
+
         run_with_tx!(self.connection_pool, tx, {
             mutate_index_metadata(tx, index_uid, |index_metadata| {
-                index_metadata.delete_source(source_id)
+                index_metadata.delete_source(&request.source_id)
             })
             .await?;
-            Ok(())
+            Ok(SourceResponse {})
         })
     }
 
-    #[instrument(skip(self), fields(index_id=index_uid.index_id(), source_id=source_id))]
+    #[instrument(skip(self), fields(index_id=request.index_uid, source_id=request.source_id))] // FIXME
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
         run_with_tx!(self.connection_pool, tx, {
             mutate_index_metadata(tx, index_uid, |index_metadata| {
-                Ok::<_, MetastoreError>(index_metadata.checkpoint.reset_source(source_id))
+                Ok::<_, MetastoreError>(index_metadata.checkpoint.reset_source(&request.source_id))
             })
             .await?;
-            Ok(())
+            Ok(SourceResponse {})
         })
     }
 

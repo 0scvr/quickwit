@@ -21,7 +21,10 @@ use async_trait::async_trait;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 
 use crate::checkpoint::IndexCheckpointDelta;
 use crate::{IndexMetadata, ListSplitsQuery, Metastore, MetastoreResult, Split, SplitMetadata};
@@ -113,9 +116,13 @@ impl Metastore for InstrumentedMetastore {
         );
     }
 
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
+        let index_uid: IndexUid = request.index_uid.clone().into();
         instrument!(
-            self.underlying.delete_index(index_uid.clone()).await,
+            self.underlying.delete_index(request).await,
             [delete_index, index_uid.index_id()]
         );
     }
@@ -204,38 +211,29 @@ impl Metastore for InstrumentedMetastore {
         );
     }
 
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.clone().into();
         instrument!(
-            self.underlying
-                .toggle_source(index_uid.clone(), source_id, enable)
-                .await,
+            self.underlying.toggle_source(request).await,
             [toggle_source, index_uid.index_id()]
         );
     }
 
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.clone().into();
         instrument!(
-            self.underlying
-                .reset_source_checkpoint(index_uid.clone(), source_id)
-                .await,
+            self.underlying.reset_source_checkpoint(request).await,
             [reset_source_checkpoint, index_uid.index_id()]
         );
     }
 
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.clone().into();
         instrument!(
-            self.underlying
-                .delete_source(index_uid.clone(), source_id)
-                .await,
+            self.underlying.delete_source(request).await,
             [delete_source, index_uid.index_id()]
         );
     }

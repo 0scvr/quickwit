@@ -26,7 +26,10 @@ use async_trait::async_trait;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 
 use self::retry::{retry, RetryParams};
 use crate::checkpoint::IndexCheckpointDelta;
@@ -92,9 +95,12 @@ impl Metastore for RetryingMetastore {
         .await
     }
 
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
         retry(&self.retry_params, || async {
-            self.inner.delete_index(index_uid.clone()).await
+            self.inner.delete_index(request.clone()).await
         })
         .await
     }
@@ -193,36 +199,26 @@ impl Metastore for RetryingMetastore {
         .await
     }
 
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
         retry(&self.retry_params, || async {
-            self.inner
-                .toggle_source(index_uid.clone(), source_id, enable)
-                .await
+            self.inner.toggle_source(request.clone()).await
         })
         .await
     }
 
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
         retry(&self.retry_params, || async {
-            self.inner
-                .reset_source_checkpoint(index_uid.clone(), source_id)
-                .await
+            self.inner.reset_source_checkpoint(request.clone()).await
         })
         .await
     }
 
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
         retry(&self.retry_params, || async {
-            self.inner.delete_source(index_uid.clone(), source_id).await
+            self.inner.delete_source(request.clone()).await
         })
         .await
     }

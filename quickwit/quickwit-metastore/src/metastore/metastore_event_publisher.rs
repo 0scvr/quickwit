@@ -25,7 +25,10 @@ use quickwit_common::pubsub::{Event, EventBroker};
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 use tracing::info;
 
 use crate::checkpoint::IndexCheckpointDelta;
@@ -117,13 +120,16 @@ impl Metastore for MetastoreEventPublisher {
         self.underlying.list_indexes_metadatas().await
     }
 
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
         let event = MetastoreEvent::DeleteIndex {
-            index_uid: index_uid.clone(),
+            index_uid: request.index_uid.clone().into(),
         };
-        self.underlying.delete_index(index_uid).await?;
+        let response = self.underlying.delete_index(request).await?;
         self.event_broker.publish(event);
-        Ok(())
+        Ok(response)
     }
 
     // Split API
@@ -194,42 +200,32 @@ impl Metastore for MetastoreEventPublisher {
         Ok(())
     }
 
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
         let event = MetastoreEvent::ToggleSource {
-            index_uid: index_uid.clone(),
-            source_id: source_id.to_string(),
-            enabled: enable,
+            index_uid: request.index_uid.clone().into(),
+            source_id: request.source_id.clone(),
+            enabled: request.enable,
         };
-        self.underlying
-            .toggle_source(index_uid, source_id, enable)
-            .await?;
+        let response = self.underlying.toggle_source(request).await?;
         self.event_broker.publish(event);
-        Ok(())
+        Ok(response)
     }
 
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
-        self.underlying
-            .reset_source_checkpoint(index_uid, source_id)
-            .await
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        self.underlying.reset_source_checkpoint(request).await
     }
 
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
         let event = MetastoreEvent::DeleteSource {
-            index_uid: index_uid.clone(),
-            source_id: source_id.to_string(),
+            index_uid: request.index_uid.clone().into(),
+            source_id: request.source_id.clone(),
         };
-        self.underlying.delete_source(index_uid, source_id).await?;
+        let response = self.underlying.delete_source(request).await?;
         self.event_broker.publish(event);
-        Ok(())
+        Ok(response)
     }
 
     // Delete task API
@@ -279,6 +275,7 @@ mod tests {
 
     use quickwit_common::pubsub::EventSubscriber;
     use quickwit_config::SourceParams;
+    use quickwit_proto::DeleteIndexRequest;
 
     use super::*;
     use crate::metastore_for_test;
@@ -330,15 +327,23 @@ mod tests {
             )
             .await
             .unwrap();
-        metastore
-            .toggle_source(index_uid.clone(), source_id, false)
-            .await
-            .unwrap();
-        metastore
-            .delete_source(index_uid.clone(), source_id)
-            .await
-            .unwrap();
-        metastore.delete_index(index_uid.clone()).await.unwrap();
+
+        let request = ToggleSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_id.to_string(),
+            enable: false,
+        };
+        metastore.toggle_source(request).await.unwrap();
+
+        let request = DeleteSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_id.to_string(),
+        };
+        metastore.delete_source(request).await.unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone().into(),
+        };
+        metastore.delete_index(request).await.unwrap();
 
         assert_eq!(
             rx.recv().await.unwrap(),

@@ -36,7 +36,10 @@ use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 use time::OffsetDateTime;
 
 use crate::checkpoint::IndexCheckpointDelta;
@@ -147,7 +150,10 @@ pub trait Metastore: Send + Sync + 'static {
     /// This API removes the specified  from the metastore, but does not remove the index from the
     /// storage. An error will occur if an index that does not exist in the storage is
     /// specified.
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()>;
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse>;
 
     // Split API
 
@@ -263,19 +269,13 @@ pub trait Metastore: Send + Sync + 'static {
 
     /// Enables or Disables a source.
     /// Fails with `SourceDoesNotExist` error if the specified source doesn't exist.
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()>;
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse>;
 
     /// Resets the checkpoint of a source identified by `index_uid` and `source_id`.
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()>;
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse>;
 
     /// Deletes a source. Fails with
     /// [`SourceDoesNotExist`](crate::MetastoreError::SourceDoesNotExist) if the specified source
@@ -283,7 +283,7 @@ pub trait Metastore: Send + Sync + 'static {
     ///
     /// The checkpoint associated to the source is deleted as well.
     /// If the checkpoint is missing, this does not trigger an error.
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()>;
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse>;
 
     // Delete tasks API
 

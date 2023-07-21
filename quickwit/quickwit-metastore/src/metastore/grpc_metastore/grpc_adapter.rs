@@ -123,13 +123,8 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
         request: tonic::Request<DeleteIndexRequest>,
     ) -> Result<tonic::Response<DeleteIndexResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
-        let delete_request = request.into_inner();
-        let delete_reply = self
-            .0
-            .delete_index(delete_request.index_uid.into())
-            .await
-            .map(|_| DeleteIndexResponse {})?;
-        Ok(tonic::Response::new(delete_reply))
+        let response = self.0.delete_index(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
     }
 
     #[instrument(skip(self, request))]
@@ -305,17 +300,8 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
         request: tonic::Request<ToggleSourceRequest>,
     ) -> Result<tonic::Response<SourceResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
-        let toggle_source_request = request.into_inner();
-        let toggle_source_reply = self
-            .0
-            .toggle_source(
-                toggle_source_request.index_uid.into(),
-                &toggle_source_request.source_id,
-                toggle_source_request.enable,
-            )
-            .await
-            .map(|_| SourceResponse {})?;
-        Ok(tonic::Response::new(toggle_source_reply))
+        let response = self.0.toggle_source(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
     }
 
     #[instrument(skip(self, request))]
@@ -324,16 +310,8 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
         request: tonic::Request<DeleteSourceRequest>,
     ) -> Result<tonic::Response<SourceResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
-        let delete_source_request = request.into_inner();
-        let delete_source_reply = self
-            .0
-            .delete_source(
-                delete_source_request.index_uid.into(),
-                &delete_source_request.source_id,
-            )
-            .await
-            .map(|_| SourceResponse {})?;
-        Ok(tonic::Response::new(delete_source_reply))
+        let response = self.0.delete_source(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
     }
 
     #[instrument(skip(self, request))]
@@ -342,13 +320,8 @@ impl grpc::MetastoreService for GrpcMetastoreAdapter {
         request: tonic::Request<ResetSourceCheckpointRequest>,
     ) -> Result<tonic::Response<SourceResponse>, tonic::Status> {
         set_parent_span_from_request_metadata(request.metadata());
-        let request = request.into_inner();
-        let reply = self
-            .0
-            .reset_source_checkpoint(request.index_uid.into(), &request.source_id)
-            .await
-            .map(|_| SourceResponse {})?;
-        Ok(tonic::Response::new(reply))
+        let response = self.0.reset_source_checkpoint(request.into_inner()).await?;
+        Ok(tonic::Response::new(response))
     }
 
     #[instrument(skip(self, request))]

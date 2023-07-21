@@ -31,7 +31,10 @@ pub mod test_suite {
     use quickwit_config::{IndexConfig, SourceConfig, SourceInputFormat, SourceParams};
     use quickwit_doc_mapper::tag_pruning::{no_tag, tag, TagFilterAst};
     use quickwit_proto::metastore::DeleteQuery;
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::{
+        DeleteIndexRequest, DeleteSourceRequest, IndexUid, ResetSourceCheckpointRequest,
+        ToggleSourceRequest,
+    };
     use quickwit_query::query_ast::qast_helper;
     use time::OffsetDateTime;
     use tokio::time::sleep;
@@ -82,7 +85,10 @@ pub mod test_suite {
                 .unwrap();
         }
         // Delete index.
-        metastore.delete_index(index_uid).await.unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.into(),
+        };
+        metastore.delete_index(request).await.unwrap();
     }
 
     // Index API tests
@@ -217,21 +223,24 @@ pub mod test_suite {
         let index_uri = format!("ram:///indexes/{index_id}");
         let index_config = IndexConfig::for_test(&index_id, &index_uri);
 
-        let error = metastore
-            .delete_index(IndexUid::new("index-not-found"))
-            .await
-            .unwrap_err();
+        let request = DeleteIndexRequest {
+            index_uid: "index-not-found".to_string(),
+        };
+        let error = metastore.delete_index(request).await.unwrap_err();
         assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
 
-        let error = metastore
-            .delete_index(IndexUid::new("test-delete-index"))
-            .await
-            .unwrap_err();
+        let request = DeleteIndexRequest {
+            index_uid: "index-not-found".to_string(),
+        };
+        let error = metastore.delete_index(request).await.unwrap_err();
         assert!(matches!(error, MetastoreError::IndexDoesNotExist { .. }));
 
         let index_uid = metastore.create_index(index_config.clone()).await.unwrap();
 
-        metastore.delete_index(index_uid.clone()).await.unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone().into(),
+        };
+        metastore.delete_index(request).await.unwrap();
 
         assert!(!metastore.index_exists(&index_id).await.unwrap());
 
@@ -359,19 +368,23 @@ pub mod test_suite {
         assert_eq!(source.enabled, true);
 
         // Disable source.
-        metastore
-            .toggle_source(index_uid.clone(), &source.source_id, false)
-            .await
-            .unwrap();
+        let request = ToggleSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source.source_id.clone(),
+            enable: false,
+        };
+        metastore.toggle_source(request).await.unwrap();
         let index_metadata = metastore.index_metadata(&index_id).await.unwrap();
         let source = index_metadata.sources.get(&source_id).unwrap();
         assert_eq!(source.enabled, false);
 
         // Enable source.
-        metastore
-            .toggle_source(index_uid.clone(), &source.source_id, true)
-            .await
-            .unwrap();
+        let request = ToggleSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source.source_id.clone(),
+            enable: true,
+        };
+        metastore.toggle_source(request).await.unwrap();
         let index_metadata = metastore.index_metadata(&index_id).await.unwrap();
         let source = index_metadata.sources.get(&source_id).unwrap();
         assert_eq!(source.enabled, true);
@@ -418,33 +431,39 @@ pub mod test_suite {
             .add_source(index_uid.clone(), source)
             .await
             .unwrap();
-        metastore
-            .delete_source(index_uid.clone(), &source_id)
-            .await
-            .unwrap();
+        let request = DeleteSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_id.clone(),
+        };
+        metastore.delete_source(request).await.unwrap();
 
         let sources = metastore.index_metadata(&index_id).await.unwrap().sources;
         assert!(sources.is_empty());
 
+        let request = DeleteSourceRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_id.clone(),
+        };
         assert!(matches!(
-            metastore
-                .delete_source(index_uid.clone(), &source_id)
-                .await
-                .unwrap_err(),
+            metastore.delete_source(request).await.unwrap_err(),
             MetastoreError::SourceDoesNotExist { .. }
         ));
+
+        let request = DeleteSourceRequest {
+            index_uid: "index-not-found".to_string(),
+            source_id: source_id.clone(),
+        };
         assert!(matches!(
-            metastore
-                .delete_source(IndexUid::new("index-not-found"), &source_id)
-                .await
-                .unwrap_err(),
+            metastore.delete_source(request).await.unwrap_err(),
             MetastoreError::IndexDoesNotExist { .. }
         ));
+
+        let request = DeleteSourceRequest {
+            index_uid: index_id.clone().into(),
+            source_id: source_id.clone(),
+        };
         assert!(matches!(
-            metastore
-                .delete_source(IndexUid::new(index_id), &source_id)
-                .await
-                .unwrap_err(),
+            metastore.delete_source(request).await.unwrap_err(),
             MetastoreError::IndexDoesNotExist { .. }
         ));
 
@@ -499,10 +518,11 @@ pub mod test_suite {
             .checkpoint
             .is_empty());
 
-        metastore
-            .reset_source_checkpoint(index_uid.clone(), &source_ids[0])
-            .await
-            .unwrap();
+        let request = ResetSourceCheckpointRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_ids[0].clone(),
+        };
+        metastore.reset_source_checkpoint(request).await.unwrap();
 
         let index_metadata = metastore.index_metadata(&index_id).await.unwrap();
         assert!(index_metadata
@@ -515,26 +535,35 @@ pub mod test_suite {
             .source_checkpoint(&source_ids[1])
             .is_some());
 
+        let request = ResetSourceCheckpointRequest {
+            index_uid: "index-not-found".to_string(),
+            source_id: source_ids[1].clone(),
+        };
         assert!(matches!(
             metastore
-                .reset_source_checkpoint(IndexUid::new("index-not-found"), &source_ids[1])
+                .reset_source_checkpoint(request)
                 .await
                 .unwrap_err(),
             MetastoreError::IndexDoesNotExist { .. }
         ));
 
+        let request = ResetSourceCheckpointRequest {
+            index_uid: index_id.clone().into(),
+            source_id: source_ids[1].clone(),
+        };
         assert!(matches!(
             metastore
-                .reset_source_checkpoint(IndexUid::new(&index_id), &source_ids[1])
+                .reset_source_checkpoint(request)
                 .await
                 .unwrap_err(),
             MetastoreError::IndexDoesNotExist { .. }
         ));
 
-        metastore
-            .reset_source_checkpoint(index_uid.clone(), &source_ids[1])
-            .await
-            .unwrap();
+        let request = ResetSourceCheckpointRequest {
+            index_uid: index_uid.clone().into(),
+            source_id: source_ids[1].clone(),
+        };
+        metastore.reset_source_checkpoint(request).await.unwrap();
 
         assert!(metastore
             .index_metadata(&index_id)
@@ -2317,7 +2346,10 @@ pub mod test_suite {
             .await
             .unwrap();
 
-        metastore.delete_index(index_uid).await.unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.into(),
+        };
+        metastore.delete_index(request).await.unwrap();
     }
 
     pub async fn test_metastore_list_delete_tasks<MetastoreToTest: Metastore + DefaultForTest>() {

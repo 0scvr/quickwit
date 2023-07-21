@@ -23,7 +23,10 @@ use async_trait::async_trait;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 
 use super::retry::RetryParams;
 use crate::checkpoint::IndexCheckpointDelta;
@@ -105,8 +108,12 @@ impl Metastore for RetryTestMetastore {
         }
     }
 
-    async fn delete_index(&self, _index_uid: IndexUid) -> MetastoreResult<()> {
-        self.try_success()
+    async fn delete_index(
+        &self,
+        _request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
+        self.try_success()?;
+        Ok(DeleteIndexResponse {})
     }
 
     async fn stage_splits(
@@ -157,23 +164,26 @@ impl Metastore for RetryTestMetastore {
 
     async fn toggle_source(
         &self,
-        _index_uid: IndexUid,
-        _source_id: &str,
-        _enable: bool,
-    ) -> MetastoreResult<()> {
-        self.try_success()
+        _request: ToggleSourceRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        self.try_success()?;
+        Ok(SourceResponse::default())
     }
 
     async fn reset_source_checkpoint(
         &self,
-        _index_uid: IndexUid,
-        _source_id: &str,
-    ) -> MetastoreResult<()> {
-        self.try_success()
+        _request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        self.try_success()?;
+        Ok(SourceResponse::default())
     }
 
-    async fn delete_source(&self, _index_uid: IndexUid, _source_id: &str) -> MetastoreResult<()> {
-        self.try_success()
+    async fn delete_source(
+        &self,
+        _request: DeleteSourceRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        self.try_success()?;
+        Ok(SourceResponse::default())
     }
 
     async fn create_delete_task(&self, _delete_query: DeleteQuery) -> MetastoreResult<DeleteTask> {

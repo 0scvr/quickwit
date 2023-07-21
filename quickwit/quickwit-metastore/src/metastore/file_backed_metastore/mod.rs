@@ -35,7 +35,10 @@ use futures::future::try_join_all;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask};
-use quickwit_proto::IndexUid;
+use quickwit_proto::{
+    DeleteIndexRequest, DeleteIndexResponse, DeleteSourceRequest, IndexUid,
+    ResetSourceCheckpointRequest, SourceResponse, ToggleSourceRequest,
+};
 use quickwit_storage::Storage;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
@@ -367,10 +370,14 @@ impl Metastore for FileBackedMetastore {
         Ok(index_uid)
     }
 
-    async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
+    async fn delete_index(
+        &self,
+        request: DeleteIndexRequest,
+    ) -> MetastoreResult<DeleteIndexResponse> {
         // We pick the outer lock here, so that we enter a critical section.
         let mut per_index_metastores_wlock = self.per_index_metastores.write().await;
 
+        let index_uid: IndexUid = request.index_uid.into();
         let index_id = index_uid.index_id();
         // If index is neither in `per_index_metastores_wlock` nor on the storage, it does not
         // exist.
@@ -411,8 +418,7 @@ impl Metastore for FileBackedMetastore {
             },
             _ => {}
         }
-
-        delete_res
+        Ok(DeleteIndexResponse {})
     }
 
     /// -------------------------------------------------------------------------------
@@ -505,41 +511,43 @@ impl Metastore for FileBackedMetastore {
         Ok(())
     }
 
-    async fn toggle_source(
-        &self,
-        index_uid: IndexUid,
-        source_id: &str,
-        enable: bool,
-    ) -> MetastoreResult<()> {
+    async fn toggle_source(&self, request: ToggleSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
+
         self.mutate(index_uid, |index| {
             index
-                .toggle_source(source_id, enable)
+                .toggle_source(&request.source_id, request.enable)
                 .map(MutationOccurred::from)
         })
         .await?;
-        Ok(())
+        Ok(SourceResponse {})
     }
 
-    async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
+    async fn delete_source(&self, request: DeleteSourceRequest) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
+
         self.mutate(index_uid, |index| {
-            index.delete_source(source_id).map(MutationOccurred::from)
+            index
+                .delete_source(&request.source_id)
+                .map(MutationOccurred::from)
         })
         .await?;
-        Ok(())
+        Ok(SourceResponse {})
     }
 
     async fn reset_source_checkpoint(
         &self,
-        index_uid: IndexUid,
-        source_id: &str,
-    ) -> MetastoreResult<()> {
+        request: ResetSourceCheckpointRequest,
+    ) -> MetastoreResult<SourceResponse> {
+        let index_uid: IndexUid = request.index_uid.into();
+
         self.mutate(index_uid, |index| {
             index
-                .reset_source_checkpoint(source_id)
+                .reset_source_checkpoint(&request.source_id)
                 .map(MutationOccurred::from)
         })
         .await?;
-        Ok(())
+        Ok(SourceResponse {})
     }
 
     /// -------------------------------------------------------------------------------
@@ -1061,6 +1069,9 @@ mod tests {
         // Delete indexes + call to list_indexes_metadata.
         let mut handles = Vec::new();
         for index_uid in index_uids {
+            let request = DeleteIndexRequest {
+                index_uid: index_uid.clone().into(),
+            };
             {
                 let metastore = metastore.clone();
                 let handle = tokio::spawn(async move {
@@ -1071,7 +1082,7 @@ mod tests {
             {
                 let metastore = metastore.clone();
                 let handle = tokio::spawn(async move {
-                    metastore.delete_index(index_uid).await.unwrap();
+                    metastore.delete_index(request).await.unwrap();
                 });
                 handles.push(handle);
             }
@@ -1179,7 +1190,10 @@ mod tests {
             IndexState::Creating
         ));
         // Let's delete the index to clean states.
-        let deleted_index_error = metastore.delete_index(index_uid.clone()).await.unwrap_err();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone().into(),
+        };
+        let deleted_index_error = metastore.delete_index(request).await.unwrap_err();
         assert!(matches!(
             deleted_index_error,
             MetastoreError::IndexDoesNotExist { .. }
@@ -1276,7 +1290,10 @@ mod tests {
         let metastore = FileBackedMetastore::for_test(Arc::new(mock_storage));
 
         // Delete index
-        let metastore_error = metastore.delete_index(index_uid.clone()).await.unwrap_err();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone().into(),
+        };
+        let metastore_error = metastore.delete_index(request).await.unwrap_err();
         assert!(matches!(
             metastore_error,
             MetastoreError::InternalError { .. }
@@ -1328,7 +1345,10 @@ mod tests {
         let metastore = FileBackedMetastore::for_test(Arc::new(mock_storage));
 
         // Delete index
-        let metastore_error = metastore.delete_index(index_uid.clone()).await.unwrap_err();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid.clone().into(),
+        };
+        let metastore_error = metastore.delete_index(request).await.unwrap_err();
         assert!(matches!(
             metastore_error,
             MetastoreError::InternalError { .. }
@@ -1407,11 +1427,15 @@ mod tests {
         assert_eq!(indexes_metadatas.len(), 2);
 
         // Let's delete indexes.
-        metastore.delete_index(index_uid_alive).await.unwrap();
-        metastore
-            .delete_index(index_uid_unregistered)
-            .await
-            .unwrap();
+        let request = DeleteIndexRequest {
+            index_uid: index_uid_alive.into(),
+        };
+        metastore.delete_index(request).await.unwrap();
+
+        let request = DeleteIndexRequest {
+            index_uid: index_uid_unregistered.into(),
+        };
+        metastore.delete_index(request).await.unwrap();
         let no_more_indexes = metastore.list_indexes_metadatas().await.unwrap();
         assert!(no_more_indexes.is_empty());
 

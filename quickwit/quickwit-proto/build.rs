@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protos = find_protos("protos/quickwit");
 
     let mut prost_config = prost_build::Config::default();
-    prost_config.protoc_arg("--experimental_allow_proto3_optional");
+    prost_config
+        .extern_path(".quickwit.metastore.IndexUid", "crate::types::IndexUid")
+        .protoc_arg("--experimental_allow_proto3_optional");
 
     tonic_build::configure()
         .type_attribute(".", "#[derive(Serialize, Deserialize, utoipa::ToSchema)]")
