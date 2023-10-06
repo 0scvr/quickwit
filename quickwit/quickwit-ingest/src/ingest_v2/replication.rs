@@ -19,6 +19,7 @@
 
 use std::iter::once;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use quickwit_common::ServiceStream;
@@ -35,33 +36,48 @@ use super::ingester::{commit_doc, IngesterState};
 use super::models::{Position, ReplicaShard, ShardStatus};
 use crate::metrics::INGEST_METRICS;
 
+pub(super) const REPLICATION_REQUEST_TIMEOUT: Duration = if cfg!(any(test, feature = "testsuite")) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_secs(3)
+};
+
+pub(super) const SYN_REPLICATION_STREAM_CAPACITY: usize = 5;
+
 /// A replication request is sent by the leader to its follower to update the state of a replica
 /// shard.
-#[derive(Debug)]
-pub(super) enum ReplicationRequest {
-    Replicate(ReplicateRequest),
+struct OneShotReplicateRequest {
+    replicate_request: ReplicateRequest,
+    replicate_response_tx: oneshot::Sender<ReplicateResponse>,
 }
 
-#[derive(Debug)]
-pub(super) enum ReplicationResponse {
-    Replicate(ReplicateResponse),
-}
-
-impl ReplicationResponse {
-    pub fn into_replicate_response(self) -> Option<ReplicateResponse> {
-        match self {
-            ReplicationResponse::Replicate(replicate_response) => Some(replicate_response),
-        }
+impl OneShotReplicateRequest {
+    fn new(replicate_request: ReplicateRequest) -> (Self, oneshot::Receiver<ReplicateResponse>) {
+        let (replicate_response_tx, replicate_response_rx) = oneshot::channel();
+        let one_shot_replicate_request = Self {
+            replicate_request,
+            replicate_response_tx,
+        };
+        (one_shot_replicate_request, replicate_response_rx)
     }
 }
 
-type OneShotReplicationRequest = (ReplicationRequest, oneshot::Sender<ReplicationResponse>);
+/// Error returned by [`ReplicationClient::replicate`].
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("failed to replicate records from leader to follower")]
+pub(super) enum ReplicationError {
+    /// The replication stream was closed.
+    #[error("replication stream was closed")]
+    Closed,
+    /// The replication request timed out.
+    #[error("replication request timed out")]
+    Timeout,
+}
 
 /// Offers a request-response API on top of a gRPC bi-directional replication stream. There should
 /// be one replication client per leader-follower pair.
-#[derive(Clone)]
 pub(super) struct ReplicationClient {
-    oneshot_replication_request_tx: mpsc::UnboundedSender<OneShotReplicationRequest>,
+    oneshot_replicate_request_tx: mpsc::Sender<OneShotReplicateRequest>,
 }
 
 impl ReplicationClient {
@@ -69,90 +85,145 @@ impl ReplicationClient {
     pub async fn replicate(
         &self,
         replicate_request: ReplicateRequest,
-    ) -> IngestV2Result<ReplicateResponse> {
-        let replication_request = ReplicationRequest::Replicate(replicate_request);
-        let (replication_response_tx, replication_response_rx) = oneshot::channel();
-        self.oneshot_replication_request_tx
-            .clone()
-            .send((replication_request, replication_response_tx))
-            .expect("TODO");
-        let replicate_response = replication_response_rx
+    ) -> Result<ReplicateResponse, ReplicationError> {
+        let (one_shot_replicate_request, replicate_response_rx) =
+            OneShotReplicateRequest::new(replicate_request);
+
+        let send_recv_fut = async move {
+            self.oneshot_replicate_request_tx
+                .clone()
+                .send(one_shot_replicate_request)
+                .await
+                .map_err(|_| ReplicationError::Closed)?;
+            let replicate_response = replicate_response_rx
+                .await
+                .map_err(|_| ReplicationError::Closed)?;
+            Ok(replicate_response)
+        };
+        tokio::time::timeout(REPLICATION_REQUEST_TIMEOUT, send_recv_fut)
             .await
-            .expect("TODO")
-            .into_replicate_response()
-            .expect("TODO");
-        Ok(replicate_response)
+            .map_err(|_| ReplicationError::Timeout)?
     }
 }
 
 /// Processes [`ReplicateRequest`] requests sent by a leader. It queues requests and pipes them into
 /// its underlying replication stream, then waits for responses from the follower on the other end
 /// of the stream.
-pub(super) struct ReplicationClientTask {
+pub(super) struct ReplicationStreamTask {
     syn_replication_stream_tx: mpsc::Sender<SynReplicationMessage>,
     ack_replication_stream: ServiceStream<IngestV2Result<AckReplicationMessage>>,
-    oneshot_replication_request_rx: mpsc::UnboundedReceiver<OneShotReplicationRequest>,
+    oneshot_replicate_request_rx: mpsc::Receiver<OneShotReplicateRequest>,
 }
 
-impl ReplicationClientTask {
-    /// Spawns a [`ReplicationClientTask`].
+impl ReplicationStreamTask {
+    /// Spawns a [`ReplicationStreamTask`].
     pub fn spawn(
         syn_replication_stream_tx: mpsc::Sender<SynReplicationMessage>,
         ack_replication_stream: ServiceStream<IngestV2Result<AckReplicationMessage>>,
-    ) -> ReplicationClient {
-        let (oneshot_replication_request_tx, oneshot_replication_request_rx) =
-            mpsc::unbounded_channel::<OneShotReplicationRequest>(); // TODO: bound and handle backpressure on the other side.
+    ) -> ReplicationStreamTaskHandle {
+        let (oneshot_replicate_request_tx, oneshot_replicate_request_rx) =
+            mpsc::channel::<OneShotReplicateRequest>(2);
 
-        let mut replication_client_task = Self {
+        let replication_client_task = Self {
             syn_replication_stream_tx,
             ack_replication_stream,
-            oneshot_replication_request_rx,
+            oneshot_replicate_request_rx,
         };
-        let future = async move {
-            replication_client_task.run().await;
-        };
-        tokio::spawn(future);
+        let (enqueue_syn_requests_join_handle, dequeue_ack_responses_join_handle) =
+            replication_client_task.run();
 
-        ReplicationClient {
-            oneshot_replication_request_tx,
+        ReplicationStreamTaskHandle {
+            oneshot_replicate_request_tx,
+            enqueue_syn_requests_join_handle,
+            dequeue_ack_responses_join_handle,
         }
     }
 
-    /// Executes the processing loop.
-    // TODO: There is a major flaw in this implementation: it processes requests sequentially, while
-    // it should be able to enqueue incoming replication requests while waiting for the next
-    // replication response from the follower.
-    async fn run(&mut self) {
-        while let Some((replication_request, replication_response_tx)) =
-            self.oneshot_replication_request_rx.recv().await
-        {
-            // TODO: Batch requests.
-            let syn_replication_message = match replication_request {
-                ReplicationRequest::Replicate(replication_request) => {
-                    SynReplicationMessage::new_replicate_request(replication_request)
+    /// Executes the processing loop. It enqueues SYN replication requests and waits for ACK
+    /// replication responses. It ensures that responses are returned in the same order
+    /// as requests.
+    fn run(mut self) -> (JoinHandle<()>, JoinHandle<()>) {
+        // There is no need to bound the capacity of the channel here because it is already
+        // virtually bounded by the capacity of the SYN replication stream.
+        let (replication_responses_tx, mut replication_responses_rx) = mpsc::unbounded_channel();
+
+        let enqueue_syn_requests_fut = async move {
+            while let Some(oneshot_replicate_request) =
+                self.oneshot_replicate_request_rx.recv().await
+            {
+                let syn_replication_message = SynReplicationMessage::new_replicate_request(
+                    oneshot_replicate_request.replicate_request,
+                );
+                if self
+                    .syn_replication_stream_tx
+                    .send(syn_replication_message)
+                    .await
+                    .is_err()
+                {
+                    // The SYN replication stream was closed.
+                    return;
                 }
-            };
-            self.syn_replication_stream_tx
-                .send(syn_replication_message)
-                .await
-                .expect("TODO");
-            let ack_replication_message = self
-                .ack_replication_stream
-                .next()
-                .await
-                .expect("TODO")
-                .expect("TODO");
-            let replication_response =
-                into_replication_response(ack_replication_message).expect("");
-            replication_response_tx
-                .send(replication_response)
-                .expect("TODO");
+                if replication_responses_tx
+                    .send(oneshot_replicate_request.replicate_response_tx)
+                    .is_err()
+                {
+                    // The replication response receiver was dropped.
+                    return;
+                }
+            }
+            // The replication client was dropped.
+        };
+        let dequeue_ack_responses_fut = async move {
+            while let Some(ack_replication_message_res) = self.ack_replication_stream.next().await {
+                let ack_replication_message = match ack_replication_message_res {
+                    Ok(ack_replication_message) => ack_replication_message,
+                    Err(_) => {
+                        return;
+                    }
+                };
+                let replication_response = into_replicate_response(ack_replication_message);
+
+                let replication_response_tx = match replication_responses_rx.recv().await {
+                    Some(replication_response_tx) => replication_response_tx,
+                    _ => {
+                        // The replication response sender is empty and was dropped.
+                        return;
+                    }
+                };
+                // We intentionally ignore the error here. It's the responsibility of the
+                // replication client to surface it.
+                let _ = replication_response_tx.send(replication_response);
+            }
+            // The ACK replication stream was closed.
+        };
+        let enqueue_syn_requests_join_handle = tokio::spawn(enqueue_syn_requests_fut);
+        let dequeue_ack_responses_join_handle = tokio::spawn(dequeue_ack_responses_fut);
+        (
+            enqueue_syn_requests_join_handle,
+            dequeue_ack_responses_join_handle,
+        )
+    }
+}
+
+pub(super) struct ReplicationStreamTaskHandle {
+    oneshot_replicate_request_tx: mpsc::Sender<OneShotReplicateRequest>,
+    enqueue_syn_requests_join_handle: JoinHandle<()>,
+    dequeue_ack_responses_join_handle: JoinHandle<()>,
+}
+
+impl ReplicationStreamTaskHandle {
+    pub fn replication_client(&self) -> ReplicationClient {
+        ReplicationClient {
+            oneshot_replicate_request_tx: self.oneshot_replicate_request_tx.clone(),
         }
     }
 }
 
-pub(super) struct ReplicationTaskHandle {
-    _join_handle: JoinHandle<IngestV2Result<()>>,
+impl Drop for ReplicationStreamTaskHandle {
+    fn drop(&mut self) {
+        self.enqueue_syn_requests_join_handle.abort();
+        self.dequeue_ack_responses_join_handle.abort();
+    }
 }
 
 /// Replication task executed per replication stream.
@@ -161,7 +232,7 @@ pub(super) struct ReplicationTask {
     follower_id: NodeId,
     state: Arc<RwLock<IngesterState>>,
     syn_replication_stream: ServiceStream<SynReplicationMessage>,
-    ack_replication_stream_tx: mpsc::Sender<IngestV2Result<AckReplicationMessage>>,
+    ack_replication_stream_tx: mpsc::UnboundedSender<IngestV2Result<AckReplicationMessage>>,
 }
 
 impl ReplicationTask {
@@ -170,7 +241,7 @@ impl ReplicationTask {
         follower_id: NodeId,
         state: Arc<RwLock<IngesterState>>,
         syn_replication_stream: ServiceStream<SynReplicationMessage>,
-        ack_replication_stream_tx: mpsc::Sender<IngestV2Result<AckReplicationMessage>>,
+        ack_replication_stream_tx: mpsc::UnboundedSender<IngestV2Result<AckReplicationMessage>>,
     ) -> ReplicationTaskHandle {
         let mut replication_task = Self {
             leader_id,
@@ -181,7 +252,9 @@ impl ReplicationTask {
         };
         let future = async move { replication_task.run().await };
         let _join_handle = tokio::spawn(future);
-        ReplicationTaskHandle { _join_handle }
+        ReplicationTaskHandle {
+            join_handle: _join_handle,
+        }
     }
 
     async fn replicate(
@@ -235,7 +308,7 @@ impl ReplicationTask {
                 state_guard
                     .replica_shards
                     .get_mut(&queue_id)
-                    .expect("The replica shard should be initialized.")
+                    .expect("replica shard should be initialized")
             };
             if replica_shard.shard_state.is_closed() {
                 // TODO
@@ -288,7 +361,7 @@ impl ReplicationTask {
             let replica_shard = state_guard
                 .replica_shards
                 .get_mut(&queue_id)
-                .expect("Replica shard should exist.");
+                .expect("replica shard should exist");
 
             if replica_position_inclusive != to_position_inclusive {
                 return Err(IngestV2Error::Internal(format!(
@@ -317,17 +390,14 @@ impl ReplicationTask {
 
     async fn run(&mut self) -> IngestV2Result<()> {
         while let Some(syn_replication_message) = self.syn_replication_stream.next().await {
-            let ack_replication_message = match syn_replication_message.message {
-                Some(syn_replication_message::Message::ReplicateRequest(replicate_request)) => self
-                    .replicate(replicate_request)
-                    .await
-                    .map(AckReplicationMessage::new_replicate_response),
-                _ => panic!("TODO"),
-            };
+            let replicate_request = into_replicate_request(syn_replication_message);
+            let ack_replication_message = self
+                .replicate(replicate_request)
+                .await
+                .map(AckReplicationMessage::new_replicate_response);
             if self
                 .ack_replication_stream_tx
                 .send(ack_replication_message)
-                .await
                 .is_err()
             {
                 break;
@@ -337,13 +407,32 @@ impl ReplicationTask {
     }
 }
 
-fn into_replication_response(outer_message: AckReplicationMessage) -> Option<ReplicationResponse> {
-    match outer_message.message {
-        Some(ack_replication_message::Message::ReplicateResponse(replicate_response)) => {
-            Some(ReplicationResponse::Replicate(replicate_response))
-        }
-        _ => None,
+pub(super) struct ReplicationTaskHandle {
+    join_handle: JoinHandle<IngestV2Result<()>>,
+}
+
+impl Drop for ReplicationTaskHandle {
+    fn drop(&mut self) {
+        self.join_handle.abort();
     }
+}
+
+fn into_replicate_request(outer_message: SynReplicationMessage) -> ReplicateRequest {
+    if let Some(syn_replication_message::Message::ReplicateRequest(replicate_request)) =
+        outer_message.message
+    {
+        return replicate_request;
+    };
+    panic!("SYN replication message should be a replicate request")
+}
+
+fn into_replicate_response(ack_replication_message: AckReplicationMessage) -> ReplicateResponse {
+    if let Some(ack_replication_message::Message::ReplicateResponse(replicate_response)) =
+        ack_replication_message.message
+    {
+        return replicate_response;
+    };
+    panic!("ACK replication message should be a replicate response")
 }
 
 #[cfg(test)]
@@ -362,9 +451,10 @@ mod tests {
     #[tokio::test]
     async fn test_replication_client() {
         let (syn_replication_stream_tx, mut syn_replication_stream_rx) = mpsc::channel(5);
-        let (ack_replication_stream_tx, ack_replication_stream) = ServiceStream::new_bounded(5);
-        let replication_client =
-            ReplicationClientTask::spawn(syn_replication_stream_tx, ack_replication_stream);
+        let (ack_replication_stream_tx, ack_replication_stream) =
+            ServiceStream::new_bounded(SYN_REPLICATION_STREAM_CAPACITY);
+        let replication_client_task_handle =
+            ReplicationStreamTask::spawn(syn_replication_stream_tx, ack_replication_stream);
 
         let dummy_replication_task_future = async move {
             while let Some(sync_replication_message) = syn_replication_stream_rx.recv().await {
@@ -429,7 +519,8 @@ mod tests {
                 },
             ],
         };
-        let replicate_response = replication_client
+        let replicate_response = replication_client_task_handle
+            .replication_client()
             .replicate(replicate_request)
             .await
             .unwrap();
@@ -457,6 +548,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_replication_client_error() {
+        let (oneshot_replicate_request_tx, mut oneshot_replicate_request_rx) =
+            mpsc::channel::<OneShotReplicateRequest>(1);
+        let replication_client = ReplicationClient {
+            oneshot_replicate_request_tx,
+        };
+        let replicate_request = ReplicateRequest::default();
+        let timeout_error = replication_client
+            .replicate(replicate_request.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(timeout_error, ReplicationError::Timeout));
+
+        oneshot_replicate_request_rx.close();
+        let closed_error = replication_client
+            .replicate(replicate_request)
+            .await
+            .unwrap_err();
+        assert!(matches!(closed_error, ReplicationError::Closed));
+    }
+
+    #[tokio::test]
     async fn test_replication_task_happy_path() {
         let leader_id: NodeId = "test-leader".into();
         let follower_id: NodeId = "test-follower".into();
@@ -466,11 +579,13 @@ mod tests {
             mrecordlog,
             primary_shards: HashMap::new(),
             replica_shards: HashMap::new(),
-            replication_clients: HashMap::new(),
+            replication_streams: HashMap::new(),
             replication_tasks: HashMap::new(),
         }));
-        let (syn_replication_stream_tx, syn_replication_stream) = ServiceStream::new_bounded(5);
-        let (ack_replication_stream_tx, mut ack_replication_stream) = ServiceStream::new_bounded(5);
+        let (syn_replication_stream_tx, syn_replication_stream) =
+            ServiceStream::new_bounded(SYN_REPLICATION_STREAM_CAPACITY);
+        let (ack_replication_stream_tx, mut ack_replication_stream) =
+            ServiceStream::new_unbounded();
         let _replication_task_handle = ReplicationTask::spawn(
             leader_id,
             follower_id,
@@ -519,10 +634,7 @@ mod tests {
             .await
             .unwrap();
         let ack_replication_message = ack_replication_stream.next().await.unwrap().unwrap();
-        let replicate_response = into_replication_response(ack_replication_message)
-            .unwrap()
-            .into_replicate_response()
-            .unwrap();
+        let replicate_response = into_replicate_response(ack_replication_message);
 
         assert_eq!(replicate_response.follower_id, "test-follower");
         assert_eq!(replicate_response.successes.len(), 3);
@@ -600,10 +712,7 @@ mod tests {
             .await
             .unwrap();
         let ack_replication_message = ack_replication_stream.next().await.unwrap().unwrap();
-        let replicate_response = into_replication_response(ack_replication_message)
-            .unwrap()
-            .into_replicate_response()
-            .unwrap();
+        let replicate_response = into_replicate_response(ack_replication_message);
 
         assert_eq!(replicate_response.follower_id, "test-follower");
         assert_eq!(replicate_response.successes.len(), 1);
@@ -624,5 +733,47 @@ mod tests {
         );
         let replica_shard_01 = state_guard.replica_shards.get(&queue_id_01).unwrap();
         replica_shard_01.assert_is_open(1);
+    }
+
+    #[tokio::test]
+    async fn test_replication_task_completes_on_client_drop() {
+        let (syn_replication_stream_tx, syn_replication_stream) =
+            ServiceStream::new_bounded(SYN_REPLICATION_STREAM_CAPACITY);
+        let (ack_replication_stream_tx, mut ack_replication_stream) =
+            ServiceStream::new_unbounded();
+        let (oneshot_replicate_request_tx, oneshot_replicate_request_rx) =
+            mpsc::channel::<OneShotReplicateRequest>(1);
+        let replication_client_task = ReplicationStreamTask {
+            syn_replication_stream_tx,
+            ack_replication_stream,
+            oneshot_replicate_request_rx,
+        };
+        let (enqueue_syn_requests_join_handle, dequeue_ack_responses_join_handle) =
+            replication_client_task.run();
+
+        drop(oneshot_replicate_request_tx);
+        enqueue_syn_requests_join_handle.await.unwrap();
+        dequeue_ack_responses_join_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_replication_task_completes_on_ack_stream_closed() {
+        let (syn_replication_stream_tx, syn_replication_stream) =
+            ServiceStream::new_bounded(SYN_REPLICATION_STREAM_CAPACITY);
+        let (ack_replication_stream_tx, mut ack_replication_stream) =
+            ServiceStream::new_unbounded();
+        let (oneshot_replicate_request_tx, oneshot_replicate_request_rx) =
+            mpsc::channel::<OneShotReplicateRequest>(1);
+        let replication_client_task = ReplicationStreamTask {
+            syn_replication_stream_tx,
+            ack_replication_stream,
+            oneshot_replicate_request_rx,
+        };
+        let (enqueue_syn_requests_join_handle, dequeue_ack_responses_join_handle) =
+            replication_client_task.run();
+
+        drop(ack_replication_stream_tx);
+        enqueue_syn_requests_join_handle.await.unwrap();
+        dequeue_ack_responses_join_handle.await.unwrap();
     }
 }
