@@ -71,6 +71,10 @@ impl IndexUid {
         Self::from_parts(index_id, Ulid::new().to_string())
     }
 
+    pub fn new_2(index_id: impl Into<String>, incarnation_id: impl Into<Ulid>) -> Self {
+        Self(format!("{}:{}", index_id.into(), incarnation_id.into()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -122,7 +126,13 @@ impl From<String> for IndexUid {
 
 impl PartialEq<&str> for IndexUid {
     fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for IndexUid {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
     }
 }
 
@@ -161,7 +171,13 @@ impl AsRef<NodeIdRef> for NodeId {
 
 impl Borrow<str> for NodeId {
     fn borrow(&self) -> &str {
-        self.as_str()
+        &self.0
+    }
+}
+
+impl Borrow<String> for NodeId {
+    fn borrow(&self) -> &String {
+        &self.0
     }
 }
 
@@ -219,6 +235,12 @@ impl FromStr for NodeId {
 
 impl PartialEq<&str> for NodeId {
     fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for NodeId {
+    fn eq(&self, other: &String) -> bool {
         self.as_str() == *other
     }
 }

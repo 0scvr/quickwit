@@ -23,7 +23,6 @@ package quickwit.ingest.ingester;
 
 import "quickwit/ingest.proto";
 
-
 service IngesterService {
     // Persists batches of documents to primary shards owned by a leader.
     rpc Persist(PersistRequest) returns (PersistResponse);
