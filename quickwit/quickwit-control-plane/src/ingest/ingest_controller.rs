@@ -577,6 +577,7 @@ mod tests {
 
         let request = GetOrCreateOpenShardsRequest {
             subrequests: Vec::new(),
+            closed_shards: Vec::new(),
             unavailable_ingesters: Vec::new(),
         };
 
@@ -591,17 +592,17 @@ mod tests {
             GetOrCreateOpenShardsSubrequest {
                 index_id: "test-index-0".to_string(),
                 source_id: source_id.to_string(),
-                closed_shards: Vec::new(),
             },
             GetOrCreateOpenShardsSubrequest {
                 index_id: "test-index-1".to_string(),
                 source_id: source_id.to_string(),
-                closed_shards: Vec::new(),
             },
         ];
+        let closed_shards = Vec::new();
         let unavailable_ingesters = vec!["test-ingester-0".to_string()];
         let request = GetOrCreateOpenShardsRequest {
             subrequests,
+            closed_shards,
             unavailable_ingesters,
         };
         let response = ingest_controller

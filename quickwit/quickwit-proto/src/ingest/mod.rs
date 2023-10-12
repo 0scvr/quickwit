@@ -57,6 +57,8 @@ pub enum IngestV2Error {
         source_id: SourceId,
         shard_id: ShardId,
     },
+    #[error("request timed out")]
+    Timeout,
 }
 
 impl From<ControlPlaneError> for IngestV2Error {
@@ -68,10 +70,11 @@ impl From<ControlPlaneError> for IngestV2Error {
 impl From<IngestV2Error> for tonic::Status {
     fn from(error: IngestV2Error) -> tonic::Status {
         let code = match &error {
-            IngestV2Error::Internal(_) => tonic::Code::Internal,
             IngestV2Error::IngesterUnavailable { .. } => tonic::Code::Unavailable,
-            IngestV2Error::ShardUnavailable { .. } => tonic::Code::Unavailable,
+            IngestV2Error::Internal(_) => tonic::Code::Internal,
             IngestV2Error::ServiceUnavailable { .. } => tonic::Code::Unavailable,
+            IngestV2Error::ShardUnavailable { .. } => tonic::Code::Unavailable,
+            IngestV2Error::Timeout { .. } => tonic::Code::DeadlineExceeded,
         };
         let message = error.to_string();
         tonic::Status::new(code, message)
@@ -91,6 +94,7 @@ impl ServiceError for IngestV2Error {
             Self::IngesterUnavailable { .. } => ServiceErrorCode::Unavailable,
             Self::ShardUnavailable { .. } => ServiceErrorCode::Unavailable,
             Self::ServiceUnavailable { .. } => ServiceErrorCode::Unavailable,
+            Self::Timeout { .. } => ServiceErrorCode::Timeout,
         }
     }
 }
@@ -163,8 +167,8 @@ impl Shard {
         self.shard_state() == ShardState::Open
     }
 
-    pub fn is_closing(&self) -> bool {
-        self.shard_state() == ShardState::Closing
+    pub fn is_fenced(&self) -> bool {
+        self.shard_state() == ShardState::Fenced
     }
 
     pub fn is_closed(&self) -> bool {
@@ -193,8 +197,8 @@ impl ShardState {
         *self == ShardState::Open
     }
 
-    pub fn is_closing(&self) -> bool {
-        *self == ShardState::Closing
+    pub fn is_fenced(&self) -> bool {
+        *self == ShardState::Fenced
     }
 
     pub fn is_closed(&self) -> bool {

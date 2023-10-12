@@ -95,7 +95,7 @@ pub enum ShardState {
     Open = 0,
     /// The shard is open and still accepts write requests, but should no longer be advertised to ingest routers.
     /// It is waiting for its leader or follower to close it with its final replication position, after which write requests will be rejected.
-    Closing = 1,
+    Fenced = 1,
     /// The shard is closed and cannot be written to.
     /// It can be safely deleted if the publish position is superior or equal to the replication position.
     Closed = 2,
@@ -108,7 +108,7 @@ impl ShardState {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             ShardState::Open => "OPEN",
-            ShardState::Closing => "CLOSING",
+            ShardState::Fenced => "FENCED",
             ShardState::Closed => "CLOSED",
         }
     }
@@ -116,7 +116,7 @@ impl ShardState {
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "OPEN" => Some(Self::Open),
-            "CLOSING" => Some(Self::Closing),
+            "FENCED" => Some(Self::Fenced),
             "CLOSED" => Some(Self::Closed),
             _ => None,
         }

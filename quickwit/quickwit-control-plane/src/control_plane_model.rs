@@ -511,7 +511,7 @@ mod tests {
             source_id: source_id.clone(),
             shard_id: 2,
             leader_id: "test-leader-0".to_string(),
-            shard_state: ShardState::Closing as i32,
+            shard_state: ShardState::Fenced as i32,
             ..Default::default()
         };
         let shard_03 = Shard {
