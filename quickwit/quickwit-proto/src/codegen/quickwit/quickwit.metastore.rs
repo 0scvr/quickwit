@@ -381,8 +381,8 @@ pub struct CloseShardsFailure {
     pub source_id: ::prost::alloc::string::String,
     #[prost(uint64, tag = "3")]
     pub shard_id: u64,
-    #[prost(enumeration = "CloseShardsFailureKind", tag = "4")]
-    pub failure_kind: i32,
+    #[prost(enumeration = "CloseShardsFailureReason", tag = "4")]
+    pub failure_reason: i32,
     #[prost(string, tag = "5")]
     pub failure_message: ::prost::alloc::string::String,
 }
@@ -507,19 +507,19 @@ impl SourceType {
 #[serde(rename_all = "snake_case")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum CloseShardsFailureKind {
+pub enum CloseShardsFailureReason {
     InvalidArgument = 0,
     NotFound = 1,
 }
-impl CloseShardsFailureKind {
+impl CloseShardsFailureReason {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            CloseShardsFailureKind::InvalidArgument => "INVALID_ARGUMENT",
-            CloseShardsFailureKind::NotFound => "NOT_FOUND",
+            CloseShardsFailureReason::InvalidArgument => "INVALID_ARGUMENT",
+            CloseShardsFailureReason::NotFound => "NOT_FOUND",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.

@@ -35,13 +35,13 @@ use quickwit_common::ServiceStream;
 use quickwit_proto::ingest::ingester::{
     AckReplicationMessage, FetchResponseV2, IngesterService, IngesterServiceClient,
     IngesterServiceStream, OpenFetchStreamRequest, OpenReplicationStreamRequest,
-    OpenReplicationStreamResponse, PersistFailure, PersistFailureKind, PersistRequest,
+    OpenReplicationStreamResponse, PersistFailure, PersistFailureReason, PersistRequest,
     PersistResponse, PersistSuccess, PingRequest, PingResponse, ReplicateRequest,
     ReplicateSubrequest, SynReplicationMessage, TruncateRequest, TruncateResponse,
 };
 use quickwit_proto::ingest::{CommitTypeV2, IngestV2Error, IngestV2Result, ShardState};
 use quickwit_proto::metastore::{
-    CloseShardsFailureKind, CloseShardsRequest, CloseShardsSubrequest,
+    CloseShardsFailureReason, CloseShardsRequest, CloseShardsSubrequest,
 };
 use quickwit_proto::split_queue_id;
 use quickwit_proto::types::{NodeId, QueueId};
@@ -61,6 +61,14 @@ use super::IngesterPool;
 use crate::ingest_v2::gc::REMOVAL_GRACE_PERIOD;
 use crate::metrics::INGEST_METRICS;
 use crate::{FollowerId, LeaderId};
+
+/// Duration after which persist requests time out with
+/// [`quickwit_proto::ingest::IngestV2Error::Timeout`].
+pub(super) const PERSIST_REQUEST_TIMEOUT: Duration = if cfg!(any(test, feature = "testsuite")) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_secs(6)
+};
 
 #[derive(Clone)]
 pub struct Ingester {
@@ -229,7 +237,7 @@ impl Ingester {
             }
         }
         for failure in close_shards_response.failures {
-            if failure.failure_kind() == CloseShardsFailureKind::NotFound {
+            if failure.failure_reason() == CloseShardsFailureReason::NotFound {
                 let queue_id = failure.queue_id();
 
                 if let Err(DeleteQueueError::IoError(error)) =
@@ -371,7 +379,7 @@ impl IngesterService for Ingester {
                     index_uid: subrequest.index_uid,
                     source_id: subrequest.source_id,
                     shard_id: subrequest.shard_id,
-                    failure_kind: PersistFailureKind::ShardClosed as i32,
+                    failure_reason: PersistFailureReason::ShardClosed as i32,
                 };
                 persist_failures.push(persist_failure);
                 continue;
@@ -478,7 +486,7 @@ impl IngesterService for Ingester {
                     // TODO: Handle replication error:
                     // 1. Close and evict all the shards hosted by the follower.
                     // 2. Close and evict the replication client.
-                    // 3. Return `PersistFailureKind::ShardClose` to router.
+                    // 3. Return `PersistFailureReason::ShardClose` to router.
                     continue;
                 }
             };
@@ -665,7 +673,7 @@ mod tests {
     };
     use quickwit_proto::ingest::DocBatchV2;
     use quickwit_proto::metastore::{
-        CloseShardsFailure, CloseShardsFailureKind, CloseShardsResponse, CloseShardsSuccess,
+        CloseShardsFailure, CloseShardsFailureReason, CloseShardsResponse, CloseShardsSuccess,
         DeleteShardsResponse,
     };
     use quickwit_proto::types::queue_id;
@@ -734,7 +742,7 @@ mod tests {
                         index_uid: "test-index:0".to_string(),
                         source_id: "test-source".to_string(),
                         shard_id: 1,
-                        failure_kind: CloseShardsFailureKind::NotFound as i32,
+                        failure_reason: CloseShardsFailureReason::NotFound as i32,
                         failure_message: "shard not found".to_string(),
                     }],
                 };

@@ -24,9 +24,9 @@ use std::fmt;
 use itertools::Either;
 use quickwit_proto::ingest::{Shard, ShardState};
 use quickwit_proto::metastore::{
-    AcquireShardsSubrequest, AcquireShardsSubresponse, CloseShardsFailure, CloseShardsFailureKind,
-    CloseShardsSubrequest, CloseShardsSuccess, DeleteShardsSubrequest, EntityKind,
-    ListShardsSubrequest, ListShardsSubresponse, MetastoreError, MetastoreResult,
+    AcquireShardsSubrequest, AcquireShardsSubresponse, CloseShardsFailure,
+    CloseShardsFailureReason, CloseShardsSubrequest, CloseShardsSuccess, DeleteShardsSubrequest,
+    EntityKind, ListShardsSubrequest, ListShardsSubresponse, MetastoreError, MetastoreResult,
     OpenShardsSubrequest, OpenShardsSubresponse,
 };
 use quickwit_proto::types::ShardId;
@@ -210,14 +210,14 @@ impl Shards {
                 index_uid: subrequest.index_uid,
                 source_id: subrequest.source_id,
                 shard_id: subrequest.shard_id,
-                failure_kind: CloseShardsFailureKind::NotFound as i32,
+                failure_reason: CloseShardsFailureReason::NotFound as i32,
                 failure_message: "shard not found".to_string(),
             };
             return Ok(MutationOccurred::No(Either::Right(failure)));
         };
         match subrequest.shard_state() {
-            ShardState::Closing => {
-                shard.shard_state = ShardState::Closing as i32;
+            ShardState::Fenced => {
+                shard.shard_state = ShardState::Fenced as i32;
                 info!(
                     index_id=%self.index_uid.index_id(),
                     source_id=%shard.source_id,
@@ -239,14 +239,14 @@ impl Shards {
             }
             other => {
                 let failure_message = format!(
-                    "invalid `shard_state` argument: expected `Closing` or `Closed` state, got \
+                    "invalid `shard_state` argument: expected `Fenced` or `Closed` state, got \
                      `{other:?}`.",
                 );
                 let failure = CloseShardsFailure {
                     index_uid: subrequest.index_uid,
                     source_id: subrequest.source_id,
                     shard_id: subrequest.shard_id,
-                    failure_kind: CloseShardsFailureKind::InvalidArgument as i32,
+                    failure_reason: CloseShardsFailureReason::InvalidArgument as i32,
                     failure_message,
                 };
                 return Ok(MutationOccurred::No(Either::Right(failure)));
