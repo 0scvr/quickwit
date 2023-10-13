@@ -27,14 +27,14 @@ use quickwit_proto::metastore::{
     AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CreateIndexRequest,
     CreateIndexResponse, DeleteIndexRequest, DeleteQuery, DeleteShardsRequest,
     DeleteShardsResponse, DeleteSourceRequest, DeleteSplitsRequest, DeleteTask, EmptyResponse,
-    IndexMetadataRequest, IndexMetadataResponse, LastDeleteOpstampRequest,
-    LastDeleteOpstampResponse, ListAllSplitsRequest, ListDeleteTasksRequest,
-    ListDeleteTasksResponse, ListIndexesMetadatasRequest, ListIndexesMetadatasResponse,
-    ListShardsRequest, ListShardsResponse, ListSplitsRequest, ListSplitsResponse,
-    ListStaleSplitsRequest, MarkSplitsForDeletionRequest, MetastoreError, MetastoreService,
-    OpenShardsRequest, OpenShardsResponse, PublishSplitsRequest, ResetSourceCheckpointRequest,
-    StageSplitsRequest, ToggleSourceRequest, UpdateSplitsDeleteOpstampRequest,
-    UpdateSplitsDeleteOpstampResponse,
+    FenceShardsRequest, FenceShardsResponse, IndexMetadataRequest, IndexMetadataResponse,
+    LastDeleteOpstampRequest, LastDeleteOpstampResponse, ListAllSplitsRequest,
+    ListDeleteTasksRequest, ListDeleteTasksResponse, ListIndexesMetadatasRequest,
+    ListIndexesMetadatasResponse, ListShardsRequest, ListShardsResponse, ListSplitsRequest,
+    ListSplitsResponse, ListStaleSplitsRequest, MarkSplitsForDeletionRequest, MetastoreError,
+    MetastoreService, OpenShardsRequest, OpenShardsResponse, PublishSplitsRequest,
+    ResetSourceCheckpointRequest, StageSplitsRequest, ToggleSourceRequest,
+    UpdateSplitsDeleteOpstampRequest, UpdateSplitsDeleteOpstampResponse,
 };
 use quickwit_proto::tonic::{Request, Response, Status};
 use quickwit_proto::{set_parent_span_from_request_metadata, tonic};
@@ -456,6 +456,7 @@ impl MetastoreService for GrpcMetastoreAdapter {
     // Shard API:
     // - `open_shards`
     // - `acquire_shards`
+    // - `fence_shards`
     // - `close_shards`
     // - `list_shards`
     // - `delete_shards`
@@ -479,6 +480,17 @@ impl MetastoreService for GrpcMetastoreAdapter {
         set_parent_span_from_request_metadata(request.metadata());
         let request = request.into_inner();
         let response = self.0.acquire_shards(request).await?;
+        Ok(tonic::Response::new(response))
+    }
+
+    #[instrument(skip(self, request))]
+    async fn fence_shards(
+        &self,
+        request: tonic::Request<FenceShardsRequest>,
+    ) -> Result<tonic::Response<FenceShardsResponse>, tonic::Status> {
+        set_parent_span_from_request_metadata(request.metadata());
+        let request = request.into_inner();
+        let response = self.0.fence_shards(request).await?;
         Ok(tonic::Response::new(response))
     }
 

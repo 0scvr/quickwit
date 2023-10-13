@@ -76,7 +76,7 @@ service ControlPlaneService {
 message GetOrCreateOpenShardsRequest {
   repeated GetOrCreateOpenShardsSubrequest subrequests = 1;
   repeated ClosedShards closed_shards = 2;
-  repeated string unavailable_ingesters = 3;
+  repeated string unavailable_leaders = 3;
 }
 
 message GetOrCreateOpenShardsSubrequest {

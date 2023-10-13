@@ -326,6 +326,30 @@ pub struct AcquireShardsSubresponse {
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FenceShardsRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub subrequests: ::prost::alloc::vec::Vec<FenceShardsSubrequest>,
+}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FenceShardsSubrequest {
+    #[prost(string, tag = "1")]
+    pub index_uid: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub source_id: ::prost::alloc::string::String,
+    #[prost(uint64, repeated, tag = "3")]
+    pub shard_ids: ::prost::alloc::vec::Vec<u64>,
+}
+/// ? fenced_shards = 1;
+/// ? closed_shards = 2;
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FenceShardsResponse {}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CloseShardsRequest {
     #[prost(message, repeated, tag = "1")]
     pub subrequests: ::prost::alloc::vec::Vec<CloseShardsSubrequest>,
@@ -340,8 +364,6 @@ pub struct CloseShardsSubrequest {
     pub source_id: ::prost::alloc::string::String,
     #[prost(uint64, tag = "3")]
     pub shard_id: u64,
-    #[prost(enumeration = "super::ingest::ShardState", tag = "4")]
-    pub shard_state: i32,
     #[prost(uint64, optional, tag = "5")]
     pub replication_position_inclusive: ::core::option::Option<u64>,
 }
@@ -1229,6 +1251,39 @@ pub mod metastore_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Routers report unavailable ingesters to the control plane when requesting open shards. If the suspected unavailability
+        /// is consistent with the view of the control plane, then, it calls the metastore to update the state of the unavailable
+        /// shards to `Fenced` and stops advertising them to routers. Ingesters are responsible for closing their shards when they
+        /// realize they are fenced via a metastore callback or gossiping.
+        ///
+        /// Fencing can also be used to move shards from one ingester to another (Fence + Open).
+        pub async fn fence_shards(
+            &mut self,
+            request: impl tonic::IntoRequest<super::FenceShardsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::FenceShardsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/quickwit.metastore.MetastoreService/FenceShards",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("quickwit.metastore.MetastoreService", "FenceShards"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn close_shards(
             &mut self,
             request: impl tonic::IntoRequest<super::CloseShardsRequest>,
@@ -1459,6 +1514,19 @@ pub mod metastore_service_server {
             request: tonic::Request<super::AcquireShardsRequest>,
         ) -> std::result::Result<
             tonic::Response<super::AcquireShardsResponse>,
+            tonic::Status,
+        >;
+        /// Routers report unavailable ingesters to the control plane when requesting open shards. If the suspected unavailability
+        /// is consistent with the view of the control plane, then, it calls the metastore to update the state of the unavailable
+        /// shards to `Fenced` and stops advertising them to routers. Ingesters are responsible for closing their shards when they
+        /// realize they are fenced via a metastore callback or gossiping.
+        ///
+        /// Fencing can also be used to move shards from one ingester to another (Fence + Open).
+        async fn fence_shards(
+            &self,
+            request: tonic::Request<super::FenceShardsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::FenceShardsResponse>,
             tonic::Status,
         >;
         async fn close_shards(
@@ -2512,6 +2580,52 @@ pub mod metastore_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = AcquireShardsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/quickwit.metastore.MetastoreService/FenceShards" => {
+                    #[allow(non_camel_case_types)]
+                    struct FenceShardsSvc<T: MetastoreService>(pub Arc<T>);
+                    impl<
+                        T: MetastoreService,
+                    > tonic::server::UnaryService<super::FenceShardsRequest>
+                    for FenceShardsSvc<T> {
+                        type Response = super::FenceShardsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::FenceShardsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                (*inner).fence_shards(request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = FenceShardsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

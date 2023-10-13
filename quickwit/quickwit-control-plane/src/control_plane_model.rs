@@ -17,6 +17,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::time::Instant;
 
@@ -185,27 +186,8 @@ impl ControlPlaneModel {
         Ok(())
     }
 
-    pub fn list_shards(&self, source_uid: &SourceUid) -> Vec<ShardId> {
-        self.shard_table.list_shards(source_uid)
-    }
-
-    pub(crate) fn get_source_configs(
-        &self,
-    ) -> impl Iterator<Item = (SourceUid, &SourceConfig)> + '_ {
-        self.index_table.values().flat_map(|index_metadata| {
-            index_metadata
-                .sources
-                .iter()
-                .map(move |(source_id, source_config)| {
-                    (
-                        SourceUid {
-                            index_uid: index_metadata.index_uid.clone(),
-                            source_id: source_id.clone(),
-                        },
-                        source_config,
-                    )
-                })
-        })
+    pub fn index_uid(&self, index_id: &str) -> Option<IndexUid> {
+        self.index_uid_table.get(index_id).cloned()
     }
 
     pub(crate) fn add_index(&mut self, index_metadata: IndexMetadata) {
@@ -239,35 +221,27 @@ impl ControlPlaneModel {
         Ok(())
     }
 
+    pub(crate) fn get_source_configs(
+        &self,
+    ) -> impl Iterator<Item = (SourceUid, &SourceConfig)> + '_ {
+        self.index_table.values().flat_map(|index_metadata| {
+            index_metadata
+                .sources
+                .iter()
+                .map(move |(source_id, source_config)| {
+                    (
+                        SourceUid {
+                            index_uid: index_metadata.index_uid.clone(),
+                            source_id: source_id.clone(),
+                        },
+                        source_config,
+                    )
+                })
+        })
+    }
+
     pub(crate) fn delete_source(&mut self, index_uid: &IndexUid, source_id: &SourceId) {
         self.shard_table.delete_source(index_uid, source_id);
-    }
-
-    /// Removes the shards identified by their index UID, source ID, and shard IDs.
-    pub fn delete_shards(
-        &mut self,
-        index_uid: &IndexUid,
-        source_id: &SourceId,
-        shard_ids: &[ShardId],
-    ) {
-        self.shard_table
-            .delete_shards(index_uid, source_id, shard_ids);
-    }
-
-    /// Sets the state of the shards identified by their index UID, source ID, and shard IDs to
-    /// `Closed`.
-    pub fn close_shards(
-        &mut self,
-        index_uid: &IndexUid,
-        source_id: &SourceId,
-        shard_ids: &[ShardId],
-    ) {
-        self.shard_table
-            .close_shards(index_uid, source_id, shard_ids);
-    }
-
-    pub fn index_uid(&self, index_id: &str) -> Option<IndexUid> {
-        self.index_uid_table.get(index_id).cloned()
     }
 
     /// Updates the shard table.
@@ -282,16 +256,71 @@ impl ControlPlaneModel {
             .update_shards(index_uid, source_id, shards, next_shard_id);
     }
 
+    /// Sets the state of the shards identified by their index UID, source ID, and shard IDs to
+    /// `Fenced`.
+    pub fn fenced_shards(
+        &mut self,
+        index_uid: &IndexUid,
+        source_id: &SourceId,
+        shard_ids: &[ShardId],
+    ) {
+        self.shard_table
+            .update_shards_state(index_uid, source_id, shard_ids, ShardState::Fenced);
+    }
+
+    /// Sets the state of the shards identified by their index UID, source ID, and shard IDs to
+    /// `Closed`.
+    pub fn close_shards(
+        &mut self,
+        index_uid: &IndexUid,
+        source_id: &SourceId,
+        shard_ids: &[ShardId],
+    ) {
+        self.shard_table
+            .update_shards_state(index_uid, source_id, shard_ids, ShardState::Closed);
+    }
+
+    /// Removes the shards identified by their index UID, source ID, and shard IDs.
+    pub fn delete_shards(
+        &mut self,
+        index_uid: &IndexUid,
+        source_id: &SourceId,
+        shard_ids: &[ShardId],
+    ) {
+        self.shard_table
+            .delete_shards(index_uid, source_id, shard_ids);
+    }
+
     /// Finds open shards for a given index and source and whose leaders are not in the set of
     /// unavailable ingesters.
     pub fn find_open_shards(
         &self,
         index_uid: &IndexUid,
         source_id: &SourceId,
-        unavailable_ingesters: &FnvHashSet<NodeId>,
+        unavailable_leaders: &FnvHashSet<NodeId>,
     ) -> Option<(Vec<Shard>, NextShardId)> {
         self.shard_table
-            .find_open_shards(index_uid, source_id, unavailable_ingesters)
+            .find_open_shards(index_uid, source_id, unavailable_leaders)
+    }
+
+    pub fn find_shards_by_leader_id(
+        &self,
+        leader_ids: &FnvHashSet<NodeId>,
+    ) -> FnvHashMap<&SourceUid, Vec<&Shard>> {
+        let mut per_source_shards: FnvHashMap<&SourceUid, Vec<&Shard>> = FnvHashMap::default();
+
+        for (source_uid, table_entry) in &self.shard_table.table_entries {
+            for shard in table_entry.shards.values() {
+                if shard.is_open() && leader_ids.contains(&shard.leader_id) {
+                    per_source_shards.entry(source_uid).or_default().push(shard);
+                }
+            }
+        }
+        per_source_shards
+    }
+
+    pub fn list_shards(&self, source_uid: &SourceUid) -> Vec<ShardId> {
+        self.shard_table.list_shards(source_uid)
     }
 }
 
@@ -354,7 +383,7 @@ impl ShardTable {
         &self,
         index_uid: &IndexUid,
         source_id: &SourceId,
-        unavailable_ingesters: &FnvHashSet<NodeId>,
+        unavailable_leaders: &FnvHashSet<NodeId>,
     ) -> Option<(Vec<Shard>, NextShardId)> {
         let source_uid = SourceUid {
             index_uid: index_uid.clone(),
@@ -366,7 +395,7 @@ impl ShardTable {
             .values()
             .filter(|shard| {
                 shard.is_open()
-                    && !unavailable_ingesters.contains(NodeIdRef::from_str(&shard.leader_id))
+                    && !unavailable_leaders.contains(NodeIdRef::from_str(&shard.leader_id))
             })
             .cloned()
             .collect();
@@ -419,12 +448,13 @@ impl ShardTable {
     }
 
     /// Sets the state of the shards identified by their index UID, source ID, and shard IDs to
-    /// `Closed`.
-    pub fn close_shards(
+    /// `shard_state`.
+    fn update_shards_state(
         &mut self,
         index_uid: &IndexUid,
         source_id: &SourceId,
         shard_ids: &[ShardId],
+        shard_state: ShardState,
     ) {
         let source_uid = SourceUid {
             index_uid: index_uid.clone(),
@@ -433,7 +463,7 @@ impl ShardTable {
         if let Some(table_entry) = self.table_entries.get_mut(&source_uid) {
             for shard_id in shard_ids {
                 if let Some(shard) = table_entry.shards.get_mut(shard_id) {
-                    shard.shard_state = ShardState::Closed as i32;
+                    shard.shard_state = shard_state as i32;
                 }
             }
         }
@@ -490,10 +520,10 @@ mod tests {
         let mut shard_table = ShardTable::default();
         shard_table.add_source(&index_uid, &source_id);
 
-        let mut unavailable_ingesters = FnvHashSet::default();
+        let mut unavailable_leaders = FnvHashSet::default();
 
         let (open_shards, next_shard_id) = shard_table
-            .find_open_shards(&index_uid, &source_id, &unavailable_ingesters)
+            .find_open_shards(&index_uid, &source_id, &unavailable_leaders)
             .unwrap();
         assert_eq!(open_shards.len(), 0);
         assert_eq!(next_shard_id, 1);
@@ -537,17 +567,17 @@ mod tests {
             5,
         );
         let (open_shards, next_shard_id) = shard_table
-            .find_open_shards(&index_uid, &source_id, &unavailable_ingesters)
+            .find_open_shards(&index_uid, &source_id, &unavailable_leaders)
             .unwrap();
         assert_eq!(open_shards.len(), 2);
         assert_eq!(open_shards[0], shard_03);
         assert_eq!(open_shards[1], shard_04);
         assert_eq!(next_shard_id, 5);
 
-        unavailable_ingesters.insert("test-leader-0".into());
+        unavailable_leaders.insert("test-leader-0".into());
 
         let (open_shards, next_shard_id) = shard_table
-            .find_open_shards(&index_uid, &source_id, &unavailable_ingesters)
+            .find_open_shards(&index_uid, &source_id, &unavailable_leaders)
             .unwrap();
         assert_eq!(open_shards.len(), 1);
         assert_eq!(open_shards[0], shard_04);

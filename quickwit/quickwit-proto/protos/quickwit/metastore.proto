@@ -110,6 +110,14 @@ service MetastoreService {
   // list of acquired shards along with the positions to index from.
   rpc AcquireShards(AcquireShardsRequest) returns (AcquireShardsResponse);
 
+  // Routers report unavailable ingesters to the control plane when requesting open shards. If the suspected unavailability
+  // is consistent with the view of the control plane, then, it calls the metastore to update the state of the unavailable
+  // shards to `Fenced` and stops advertising them to routers. Ingesters are responsible for closing their shards when they
+  // realize they are fenced via a metastore callback or gossiping.
+  //
+  // Fencing can also be used to move shards from one ingester to another (Fence + Open).
+  rpc FenceShards(FenceShardsRequest) returns (FenceShardsResponse);
+
   rpc CloseShards(CloseShardsRequest) returns (CloseShardsResponse);
 
   rpc DeleteShards(DeleteShardsRequest) returns (DeleteShardsResponse);
@@ -308,6 +316,21 @@ message AcquireShardsSubresponse {
     repeated quickwit.ingest.Shard acquired_shards = 3;
 }
 
+message FenceShardsRequest {
+  repeated FenceShardsSubrequest subrequests = 1;
+}
+
+message FenceShardsSubrequest {
+    string index_uid = 1;
+    string source_id = 2;
+    repeated uint64 shard_ids = 3;
+}
+
+message FenceShardsResponse {
+  // ? fenced_shards = 1;
+  // ? closed_shards = 2;
+}
+
 message CloseShardsRequest {
   repeated CloseShardsSubrequest subrequests = 1;
 }
@@ -316,7 +339,6 @@ message CloseShardsSubrequest {
     string index_uid = 1;
     string source_id = 2;
     uint64 shard_id = 3;
-    quickwit.ingest.ShardState shard_state = 4;
     optional uint64 replication_position_inclusive = 5;
 }
 

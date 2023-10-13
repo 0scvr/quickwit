@@ -24,13 +24,11 @@ use async_trait::async_trait;
 use quickwit_common::pubsub::EventBroker;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
-use quickwit_proto::metastore::events::{
-    AddSourceEvent, DeleteIndexEvent, DeleteSourceEvent, ToggleSourceEvent,
-};
 use quickwit_proto::metastore::{
     AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, ListShardsRequest,
-    ListShardsResponse, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
+    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, FenceShardsRequest,
+    FenceShardsResponse, ListShardsRequest, ListShardsResponse, MetastoreResult, OpenShardsRequest,
+    OpenShardsResponse,
 };
 use quickwit_proto::{IndexUid, PublishToken};
 use tracing::info;
@@ -93,12 +91,7 @@ impl Metastore for MetastoreEventPublisher {
     }
 
     async fn delete_index(&self, index_uid: IndexUid) -> MetastoreResult<()> {
-        let event = DeleteIndexEvent {
-            index_uid: index_uid.clone(),
-        };
-        self.underlying.delete_index(index_uid).await?;
-        self.event_broker.publish(event);
-        Ok(())
+        self.underlying.delete_index(index_uid).await
     }
 
     // Split API
@@ -161,15 +154,7 @@ impl Metastore for MetastoreEventPublisher {
     // Source API
 
     async fn add_source(&self, index_uid: IndexUid, source: SourceConfig) -> MetastoreResult<()> {
-        let event = AddSourceEvent {
-            index_uid: index_uid.clone(),
-            source_id: source.source_id.clone(),
-            source_type: source.source_type(),
-        };
-        info!("add source {0}, {source:?}", index_uid.index_id());
-        self.underlying.add_source(index_uid, source).await?;
-        self.event_broker.publish(event);
-        Ok(())
+        self.underlying.add_source(index_uid, source).await
     }
 
     async fn toggle_source(
@@ -178,16 +163,9 @@ impl Metastore for MetastoreEventPublisher {
         source_id: &str,
         enable: bool,
     ) -> MetastoreResult<()> {
-        let event = ToggleSourceEvent {
-            index_uid: index_uid.clone(),
-            source_id: source_id.to_string(),
-            enabled: enable,
-        };
         self.underlying
             .toggle_source(index_uid, source_id, enable)
-            .await?;
-        self.event_broker.publish(event);
-        Ok(())
+            .await
     }
 
     async fn reset_source_checkpoint(
@@ -201,13 +179,7 @@ impl Metastore for MetastoreEventPublisher {
     }
 
     async fn delete_source(&self, index_uid: IndexUid, source_id: &str) -> MetastoreResult<()> {
-        let event = DeleteSourceEvent {
-            index_uid: index_uid.clone(),
-            source_id: source_id.to_string(),
-        };
-        self.underlying.delete_source(index_uid, source_id).await?;
-        self.event_broker.publish(event);
-        Ok(())
+        self.underlying.delete_source(index_uid, source_id).await
     }
 
     // Delete task API
@@ -262,11 +234,22 @@ impl Metastore for MetastoreEventPublisher {
         self.underlying.acquire_shards(request).await
     }
 
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse> {
+        let response = self.underlying.fence_shards(request.clone()).await?;
+        self.event_broker.publish(request);
+        Ok(response)
+    }
+
     async fn close_shards(
         &self,
         request: CloseShardsRequest,
     ) -> MetastoreResult<CloseShardsResponse> {
-        self.underlying.close_shards(request).await
+        let response = self.underlying.close_shards(request.clone()).await?;
+        self.event_broker.publish(request);
+        Ok(response)
     }
 
     async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
@@ -277,7 +260,9 @@ impl Metastore for MetastoreEventPublisher {
         &self,
         request: DeleteShardsRequest,
     ) -> MetastoreResult<DeleteShardsResponse> {
-        self.underlying.delete_shards(request).await
+        let response = self.underlying.delete_shards(request.clone()).await?;
+        self.event_broker.publish(request);
+        Ok(response)
     }
 }
 
@@ -286,7 +271,9 @@ mod tests {
 
     use quickwit_common::pubsub::EventSubscriber;
     use quickwit_config::SourceParams;
-    use quickwit_proto::metastore::SourceType;
+    use quickwit_proto::metastore::{
+        CloseShardsSubrequest, FenceShardsSubrequest, OpenShardsSubrequest, SourceType,
+    };
 
     use super::*;
     use crate::metastore_for_test;
@@ -305,11 +292,11 @@ mod tests {
     metastore_test_suite!(crate::metastore::metastore_event_publisher::MetastoreEventPublisher);
 
     #[derive(Debug, Clone)]
-    struct TxSubscriber(tokio::sync::mpsc::Sender<AddSourceEvent>);
+    struct TxSubscriber(tokio::sync::mpsc::Sender<CloseShardsRequest>);
 
     #[async_trait]
-    impl EventSubscriber<AddSourceEvent> for TxSubscriber {
-        async fn handle_event(&mut self, event: AddSourceEvent) {
+    impl EventSubscriber<CloseShardsRequest> for TxSubscriber {
+        async fn handle_event(&mut self, event: CloseShardsRequest) {
             let _ = self.0.send(event).await;
         }
     }
@@ -324,7 +311,7 @@ mod tests {
         let index_uid = IndexUid::new("test-index");
         let index_uri = "ram:///indexes/test-index";
         let source_id = "test-source";
-        let source_config = SourceConfig::for_test(source_id, SourceParams::void());
+        let source_config = SourceConfig::for_test(source_id, SourceParams::Ingest);
 
         let index_uid = metastore
             .create_index(IndexConfig::for_test(index_uid.index_id(), index_uri))
@@ -336,14 +323,31 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            rx.recv().await.unwrap(),
-            AddSourceEvent {
-                index_uid: index_uid.clone(),
+        let open_shards_request = OpenShardsRequest {
+            subrequests: vec![OpenShardsSubrequest {
+                index_uid: index_uid.clone().into(),
                 source_id: source_id.to_string(),
-                source_type: SourceType::Void,
-            }
-        );
+                leader_id: "test-ingester".to_string(),
+                follower_id: None,
+                next_shard_id: 1,
+            }],
+        };
+        metastore.open_shards(open_shards_request).await.unwrap();
+
+        let close_shards_request = CloseShardsRequest {
+            subrequests: vec![CloseShardsSubrequest {
+                index_uid: index_uid.clone().into(),
+                source_id: source_id.to_string(),
+                shard_id: 1,
+                replication_position_inclusive: None,
+            }],
+        };
+        metastore
+            .close_shards(close_shards_request.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(rx.recv().await.unwrap(), close_shards_request,);
         subscription.cancel();
     }
 }

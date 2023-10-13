@@ -39,9 +39,9 @@ use quickwit_config::{validate_index_id_pattern, IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{
     AcquireShardsRequest, AcquireShardsResponse, AcquireShardsSubrequest, CloseShardsRequest,
     CloseShardsResponse, CloseShardsSubrequest, DeleteQuery, DeleteShardsRequest,
-    DeleteShardsResponse, DeleteShardsSubrequest, DeleteTask, EntityKind, ListShardsRequest,
-    ListShardsResponse, MetastoreError, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
-    OpenShardsSubrequest,
+    DeleteShardsResponse, DeleteShardsSubrequest, DeleteTask, EntityKind, FenceShardsRequest,
+    FenceShardsResponse, FenceShardsSubrequest, ListShardsRequest, ListShardsResponse,
+    MetastoreError, MetastoreResult, OpenShardsRequest, OpenShardsResponse, OpenShardsSubrequest,
 };
 use quickwit_proto::{IndexUid, PublishToken};
 use quickwit_storage::Storage;
@@ -693,6 +693,26 @@ impl Metastore for FileBackedMetastore {
                 .mutate(index_uid, |index| index.acquire_shards(subrequests))
                 .await?;
             response.subresponses.extend(subresponses);
+        }
+        Ok(response)
+    }
+
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse> {
+        let response = FenceShardsResponse {};
+        // We must group the subrequests by `index_uid` to mutate each index only once, since each
+        // mutation triggers an IO.
+        let grouped_subrequests: HashMap<IndexUid, Vec<FenceShardsSubrequest>> = request
+            .subrequests
+            .into_iter()
+            .into_group_map_by(|subrequest| IndexUid::new(subrequest.index_uid.clone()));
+
+        for (index_uid, subrequests) in grouped_subrequests {
+            let subresponses = self
+                .mutate(index_uid, |index| index.fence_shards(subrequests))
+                .await?;
         }
         Ok(response)
     }

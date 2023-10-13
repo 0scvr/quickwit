@@ -169,7 +169,6 @@ impl Ingester {
                 index_uid: index_uid.into(),
                 source_id,
                 shard_id,
-                shard_state: ShardState::Closed as i32,
                 replication_position_inclusive: *current_position,
             };
             subrequests.push(subrequest);
@@ -704,7 +703,6 @@ mod tests {
                     assert_eq!(subrequest.index_uid, "test-index:0");
                     assert_eq!(subrequest.source_id, "test-source");
                     assert_eq!(subrequest.shard_id, i as u64 + 1);
-                    assert_eq!(subrequest.shard_state(), ShardState::Closed);
                 }
                 assert!(subrequests[0].replication_position_inclusive.is_none());
                 assert_eq!(subrequests[1].replication_position_inclusive, Some(1));

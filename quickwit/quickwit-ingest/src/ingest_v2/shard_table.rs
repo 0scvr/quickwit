@@ -74,13 +74,13 @@ impl ShardTableEntry {
 
     /// Returns `true` if at least one shard in the table entry is open and has a leader available.
     /// As it goes through the list of shards in the entry, it populates `closed_shard_ids` and
-    /// `unavailable_ingesters` with the shard IDs of the closed shards and the node ID of the
+    /// `unavailable_leaders` with the shard IDs of the closed shards and the node ID of the
     /// unavailable ingesters encountered along the way.
     pub fn has_open_shards(
         &self,
         closed_shard_ids: &mut Vec<ShardId>,
         ingester_pool: &IngesterPool,
-        unavailable_ingesters: &mut HashSet<NodeId>,
+        unavailable_leaders: &mut HashSet<NodeId>,
     ) -> bool {
         for shards in [&self.local_shards, &self.remote_shards] {
             for shard in shards {
@@ -91,7 +91,7 @@ impl ShardTableEntry {
                         return true;
                     } else {
                         let leader_id: NodeId = shard.leader_id.clone().into();
-                        unavailable_ingesters.insert(leader_id);
+                        unavailable_leaders.insert(leader_id);
                     }
                 }
             }
@@ -188,13 +188,13 @@ impl ShardTable {
         source_id: impl Into<SourceId>,
         closed_shards: &mut Vec<ClosedShards>,
         ingester_pool: &IngesterPool,
-        unavailable_ingesters: &mut HashSet<NodeId>,
+        unavailable_leaders: &mut HashSet<NodeId>,
     ) -> bool {
         if let Some(entry) = self.find_entry(index_id, source_id) {
             let mut closed_shard_ids: Vec<ShardId> = Vec::new();
 
             let result =
-                entry.has_open_shards(&mut closed_shard_ids, ingester_pool, unavailable_ingesters);
+                entry.has_open_shards(&mut closed_shard_ids, ingester_pool, unavailable_leaders);
 
             if !closed_shard_ids.is_empty() {
                 closed_shards.push(ClosedShards {
@@ -328,15 +328,15 @@ mod tests {
         };
         let mut closed_shard_ids = Vec::new();
         let ingester_pool = IngesterPool::default();
-        let mut unavailable_ingesters = HashSet::new();
+        let mut unavailable_leaders = HashSet::new();
 
         assert!(!table_entry.has_open_shards(
             &mut closed_shard_ids,
             &ingester_pool,
-            &mut unavailable_ingesters
+            &mut unavailable_leaders
         ));
         assert!(closed_shard_ids.is_empty());
-        assert!(unavailable_ingesters.is_empty());
+        assert!(unavailable_leaders.is_empty());
 
         ingester_pool.insert(
             "test-ingester-0".into(),
@@ -373,11 +373,11 @@ mod tests {
         assert!(table_entry.has_open_shards(
             &mut closed_shard_ids,
             &ingester_pool,
-            &mut unavailable_ingesters
+            &mut unavailable_leaders
         ));
         assert_eq!(closed_shard_ids.len(), 1);
         assert_eq!(closed_shard_ids[0], 1);
-        assert!(unavailable_ingesters.is_empty());
+        assert!(unavailable_leaders.is_empty());
 
         closed_shard_ids.clear();
 
@@ -414,12 +414,12 @@ mod tests {
         assert!(table_entry.has_open_shards(
             &mut closed_shard_ids,
             &ingester_pool,
-            &mut unavailable_ingesters
+            &mut unavailable_leaders
         ));
         assert_eq!(closed_shard_ids.len(), 1);
         assert_eq!(closed_shard_ids[0], 1);
-        assert_eq!(unavailable_ingesters.len(), 1);
-        assert!(unavailable_ingesters.contains("test-ingester-2"));
+        assert_eq!(unavailable_leaders.len(), 1);
+        assert!(unavailable_leaders.contains("test-ingester-2"));
     }
 
     #[test]

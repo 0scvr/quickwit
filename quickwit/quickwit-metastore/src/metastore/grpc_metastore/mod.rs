@@ -34,8 +34,8 @@ use quickwit_proto::metastore::{
     serde_utils as metastore_serde_utils, AcquireShardsRequest, AcquireShardsResponse,
     AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CreateIndexRequest,
     DeleteIndexRequest, DeleteQuery, DeleteShardsRequest, DeleteShardsResponse,
-    DeleteSourceRequest, DeleteSplitsRequest, DeleteTask, IndexMetadataRequest,
-    LastDeleteOpstampRequest, ListAllSplitsRequest, ListDeleteTasksRequest,
+    DeleteSourceRequest, DeleteSplitsRequest, DeleteTask, FenceShardsRequest, FenceShardsResponse,
+    IndexMetadataRequest, LastDeleteOpstampRequest, ListAllSplitsRequest, ListDeleteTasksRequest,
     ListIndexesMetadatasRequest, ListShardsRequest, ListShardsResponse, ListSplitsRequest,
     ListStaleSplitsRequest, MarkSplitsForDeletionRequest, MetastoreError, MetastoreResult,
     MetastoreServiceClient, OpenShardsRequest, OpenShardsResponse, PublishSplitsRequest,
@@ -572,6 +572,19 @@ impl Metastore for MetastoreGrpcClient {
             .underlying
             .clone()
             .acquire_shards(request)
+            .await
+            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
+        Ok(response.into_inner())
+    }
+
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse> {
+        let response = self
+            .underlying
+            .clone()
+            .fence_shards(request)
             .await
             .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
         Ok(response.into_inner())

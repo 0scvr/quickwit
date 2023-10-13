@@ -40,8 +40,8 @@ use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore::{
     AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
     DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, EntityKind,
-    ListShardsRequest, ListShardsResponse, MetastoreError, MetastoreResult, OpenShardsRequest,
-    OpenShardsResponse,
+    FenceShardsRequest, FenceShardsResponse, ListShardsRequest, ListShardsResponse, MetastoreError,
+    MetastoreResult, OpenShardsRequest, OpenShardsResponse,
 };
 use quickwit_proto::{IndexUid, PublishToken};
 use time::OffsetDateTime;
@@ -318,6 +318,8 @@ pub trait Metastore: fmt::Debug + Send + Sync + 'static {
 
     // Shard API:
     // - `open_shards`
+    // - `acquire_shards`
+    // - `fence_shards`
     // - `close_shards`
     // - `list_shards`
     // - `delete_shards`
@@ -325,11 +327,15 @@ pub trait Metastore: fmt::Debug + Send + Sync + 'static {
     /// Creates new open shards for one or multiple indexes.
     async fn open_shards(&self, request: OpenShardsRequest) -> MetastoreResult<OpenShardsResponse>;
 
-    ///
     async fn acquire_shards(
         &self,
         request: AcquireShardsRequest,
     ) -> MetastoreResult<AcquireShardsResponse>;
+
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse>;
 
     /// Closes some shards, i.e. changes their state from `Open` to `Closing` or `Closed`.
     async fn close_shards(

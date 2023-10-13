@@ -25,8 +25,9 @@ use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{
     AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, ListShardsRequest,
-    ListShardsResponse, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
+    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, FenceShardsRequest,
+    FenceShardsResponse, ListShardsRequest, ListShardsResponse, MetastoreResult, OpenShardsRequest,
+    OpenShardsResponse,
 };
 use quickwit_proto::{IndexUid, PublishToken};
 
@@ -334,6 +335,16 @@ impl Metastore for InstrumentedMetastore {
         instrument!(
             self.underlying.acquire_shards(request).await,
             [acquire_shards, ""]
+        );
+    }
+
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse> {
+        instrument!(
+            self.underlying.fence_shards(request).await,
+            [close_shards, ""]
         );
     }
 

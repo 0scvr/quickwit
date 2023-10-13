@@ -28,8 +28,9 @@ use quickwit_proto::metastore::{
     serde_utils as metastore_serde_utils, AcquireShardsRequest, AcquireShardsResponse,
     AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CreateIndexRequest,
     DeleteIndexRequest, DeleteQuery, DeleteShardsRequest, DeleteShardsResponse,
-    DeleteSourceRequest, DeleteTask, ListShardsRequest, ListShardsResponse, MetastoreResult,
-    OpenShardsRequest, OpenShardsResponse, ToggleSourceRequest,
+    DeleteSourceRequest, DeleteTask, FenceShardsRequest, FenceShardsResponse, ListShardsRequest,
+    ListShardsResponse, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
+    ToggleSourceRequest,
 };
 use quickwit_proto::{IndexUid, PublishToken};
 
@@ -240,6 +241,13 @@ impl Metastore for ControlPlaneMetastore {
 
     async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
         self.metastore.list_shards(request).await
+    }
+
+    async fn fence_shards(
+        &self,
+        request: FenceShardsRequest,
+    ) -> MetastoreResult<FenceShardsResponse> {
+        self.metastore.fence_shards(request).await
     }
 
     async fn close_shards(

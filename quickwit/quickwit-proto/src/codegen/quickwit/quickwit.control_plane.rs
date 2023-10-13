@@ -7,7 +7,7 @@ pub struct GetOrCreateOpenShardsRequest {
     #[prost(message, repeated, tag = "2")]
     pub closed_shards: ::prost::alloc::vec::Vec<ClosedShards>,
     #[prost(string, repeated, tag = "3")]
-    pub unavailable_ingesters: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    pub unavailable_leaders: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]

@@ -35,10 +35,11 @@ use quickwit_proto::ingest::IngestV2Error;
 use quickwit_proto::metastore::{EntityKind, MetastoreError};
 use quickwit_proto::types::NodeId;
 use quickwit_proto::{metastore, IndexUid};
-use rand::seq::SliceRandom;
+use rand::seq::{index, SliceRandom};
 use tokio::time::timeout;
 
 use crate::control_plane_model::ControlPlaneModel;
+use crate::indexing_plan;
 
 const PING_LEADER_TIMEOUT: Duration = if cfg!(test) {
     Duration::from_millis(50)
@@ -116,14 +117,14 @@ impl IngestController {
     /// 1, only a leader is returned. If no nodes are available, `None` is returned.
     async fn find_leader_and_follower(
         &mut self,
-        unavailable_ingesters: &mut FnvHashSet<NodeId>,
+        unavailable_leaders: &mut FnvHashSet<NodeId>,
         progress: &Progress,
     ) -> Option<(NodeId, Option<NodeId>)> {
         let mut candidates: Vec<NodeId> = self
             .ingester_pool
             .keys()
             .into_iter()
-            .filter(|node_id| !unavailable_ingesters.contains(node_id))
+            .filter(|node_id| !unavailable_leaders.contains(node_id))
             .collect();
         candidates.shuffle(&mut rand::thread_rng());
 
@@ -132,7 +133,7 @@ impl IngestController {
 
         if self.replication_factor == 1 {
             for leader_id in candidates {
-                if unavailable_ingesters.contains(&leader_id) {
+                if unavailable_leaders.contains(&leader_id) {
                     continue;
                 }
                 if self
@@ -145,10 +146,10 @@ impl IngestController {
             }
         } else {
             for (leader_id, follower_id) in candidates.into_iter().tuple_combinations() {
-                // We must perform this check here since the `unavailable_ingesters` set can grow as
+                // We must perform this check here since the `unavailable_leaders` set can grow as
                 // we go through the loop.
-                if unavailable_ingesters.contains(&leader_id)
-                    || unavailable_ingesters.contains(&follower_id)
+                if unavailable_leaders.contains(&leader_id)
+                    || unavailable_leaders.contains(&follower_id)
                 {
                     continue;
                 }
@@ -158,7 +159,7 @@ impl IngestController {
                 {
                     Ok(_) => return Some((leader_id, Some(follower_id))),
                     Err(PingError::LeaderUnavailable) => {
-                        unavailable_ingesters.insert(leader_id);
+                        unavailable_leaders.insert(leader_id);
                     }
                     Err(PingError::FollowerUnavailable) => {
                         // We do not mark the follower as unavailable here. The issue could be
@@ -172,6 +173,53 @@ impl IngestController {
         None
     }
 
+    async fn fence_shards(
+        &mut self,
+        maybe_unavailable_leaders: &FnvHashSet<NodeId>,
+        model: &mut ControlPlaneModel,
+        progress: &Progress,
+    ) -> ControlPlaneResult<()> {
+        // Confirms that the reported leaders are indeed unavailable from the point of view of the
+        // control plane.
+        let mut surely_unavailable_leaders = FnvHashSet::default();
+
+        for leader_id in maybe_unavailable_leaders {
+            if !self.ingester_pool.contains_key(leader_id) {
+                surely_unavailable_leaders.insert(leader_id.clone());
+            } else {
+                // TODO: If, unlike us, a majority of nodes think the leader is unavailable, we
+                // probably should do something.
+            }
+        }
+        let per_source_unavailable_shards =
+            model.find_shards_by_leader_id(&surely_unavailable_leaders);
+
+        let fence_shards_subrequests = per_source_unavailable_shards
+            .iter()
+            .map(|(source_uid, shards)| metastore::FenceShardsSubrequest {
+                index_uid: source_uid.index_uid.clone().into(),
+                source_id: source_uid.source_id.clone(),
+                shard_ids: shards.iter().map(|shard| shard.shard_id).collect(),
+            })
+            .collect();
+        let fence_shards_request = metastore::FenceShardsRequest {
+            subrequests: fence_shards_subrequests,
+        };
+        let fence_shards_response = progress
+            .protect_future(self.metastore.fence_shards(fence_shards_request))
+            .await?;
+        // TODO: Fence shards in the model.
+        // for fenced_shards_subresponse in fence_shards_response.subresponses {
+        //     model.fence_shards(
+        //         &fenced_shards_subresponse.index_uid,
+        //         &fenced_shards_subresponse.source_id,
+        //         &fenced_shards_subresponse.shard_ids,
+        //     );
+        // }
+        // TODO: Send a fence shards RPC to leaders and followers of the shards in a fire and forget fashion.
+        Ok(())
+    }
+
     /// Finds the open shards that satisfies the [`GetOrCreateOpenShardsRequest`] request sent by an
     /// ingest router. First, the control plane checks its internal shard table to find
     /// candidates. If it does not contain any, the control plane will ask
@@ -182,14 +230,20 @@ impl IngestController {
         model: &mut ControlPlaneModel,
         progress: &Progress,
     ) -> ControlPlaneResult<GetOrCreateOpenShardsResponse> {
-        let mut get_open_shards_subresponses =
-            Vec::with_capacity(get_open_shards_request.subrequests.len());
+        // 1. Handle closed shards.
 
-        let mut unavailable_ingesters: FnvHashSet<NodeId> = get_open_shards_request
-            .unavailable_ingesters
+        // 2. Handle unavailable ingesters.
+        let mut unavailable_leaders: FnvHashSet<NodeId> = get_open_shards_request
+            .unavailable_leaders
             .into_iter()
             .map(|ingester_id| ingester_id.into())
             .collect();
+
+        self.fence_shards(&unavailable_leaders, model, progress)
+            .await?;
+
+        let mut get_open_shards_subresponses =
+            Vec::with_capacity(get_open_shards_request.subrequests.len());
 
         let mut open_shards_subrequests = Vec::new();
 
@@ -206,7 +260,7 @@ impl IngestController {
                 .find_open_shards(
                     &index_uid,
                     &get_open_shards_subrequest.source_id,
-                    &unavailable_ingesters,
+                    &unavailable_leaders,
                 )
                 .ok_or_else(|| {
                     MetastoreError::NotFound(EntityKind::Source {
@@ -226,7 +280,7 @@ impl IngestController {
                 // TODO: Find leaders in batches.
                 // TODO: Round-robin leader-follower pairs or choose according to load.
                 let (leader_id, follower_id) = self
-                    .find_leader_and_follower(&mut unavailable_ingesters, progress)
+                    .find_leader_and_follower(&mut unavailable_leaders, progress)
                     .await
                     .ok_or_else(|| {
                         ControlPlaneError::Unavailable("no available ingester".to_string())
@@ -238,7 +292,6 @@ impl IngestController {
                     follower_id: follower_id.map(|follower_id| follower_id.into()),
                     next_shard_id,
                 };
-
                 open_shards_subrequests.push(open_shards_subrequest);
             }
         }
@@ -578,7 +631,7 @@ mod tests {
         let request = GetOrCreateOpenShardsRequest {
             subrequests: Vec::new(),
             closed_shards: Vec::new(),
-            unavailable_ingesters: Vec::new(),
+            unavailable_leaders: Vec::new(),
         };
 
         let response = ingest_controller
@@ -599,11 +652,11 @@ mod tests {
             },
         ];
         let closed_shards = Vec::new();
-        let unavailable_ingesters = vec!["test-ingester-0".to_string()];
+        let unavailable_leaders = vec!["test-ingester-0".to_string()];
         let request = GetOrCreateOpenShardsRequest {
             subrequests,
             closed_shards,
-            unavailable_ingesters,
+            unavailable_leaders,
         };
         let response = ingest_controller
             .get_or_create_open_shards(request, &mut model, &progress)

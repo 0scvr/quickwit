@@ -106,10 +106,10 @@ impl IngestRouter {
     ) -> GetOrCreateOpenShardsRequest {
         let state_guard = self.state.read().await;
         let mut get_open_shards_subrequests = Vec::new();
-        // `closed_shards` and `unavailable_ingesters` are populated by calls to `has_open_shards`
+        // `closed_shards` and `unavailable_leaders` are populated by calls to `has_open_shards`
         // as we're looking for open shards to route the subrequests to.
         let mut closed_shards: Vec<ClosedShards> = Vec::new();
-        let mut unavailable_ingesters: HashSet<NodeId> = HashSet::new();
+        let mut unavailable_leaders: HashSet<NodeId> = HashSet::new();
 
         for subrequest in subrequests {
             if !state_guard.shard_table.has_open_shards(
@@ -117,7 +117,7 @@ impl IngestRouter {
                 &subrequest.source_id,
                 &mut closed_shards,
                 ingester_pool,
-                &mut unavailable_ingesters,
+                &mut unavailable_leaders,
             ) {
                 let subrequest = GetOrCreateOpenShardsSubrequest {
                     index_id: subrequest.index_id.clone(),
@@ -130,7 +130,7 @@ impl IngestRouter {
         GetOrCreateOpenShardsRequest {
             subrequests: get_open_shards_subrequests,
             closed_shards,
-            unavailable_ingesters: unavailable_ingesters.into_iter().map(Into::into).collect(),
+            unavailable_leaders: unavailable_leaders.into_iter().map(Into::into).collect(),
         }
     }
 
@@ -393,11 +393,11 @@ mod tests {
             }
         );
         assert_eq!(
-            get_or_create_open_shard_request.unavailable_ingesters.len(),
+            get_or_create_open_shard_request.unavailable_leaders.len(),
             1
         );
         assert_eq!(
-            get_or_create_open_shard_request.unavailable_ingesters[0],
+            get_or_create_open_shard_request.unavailable_leaders[0],
             "test-ingester-0"
         );
 
@@ -416,7 +416,7 @@ mod tests {
 
         assert_eq!(get_or_create_open_shard_request.subrequests.len(), 1);
         assert_eq!(
-            get_or_create_open_shard_request.unavailable_ingesters.len(),
+            get_or_create_open_shard_request.unavailable_leaders.len(),
             0
         );
     }
@@ -484,7 +484,7 @@ mod tests {
         let get_or_create_open_shards_request = GetOrCreateOpenShardsRequest {
             subrequests: Vec::new(),
             closed_shards: Vec::new(),
-            unavailable_ingesters: Vec::new(),
+            unavailable_leaders: Vec::new(),
         };
         router
             .populate_shard_table(get_or_create_open_shards_request)
@@ -508,7 +508,7 @@ mod tests {
                 },
             ],
             closed_shards: Vec::new(),
-            unavailable_ingesters: Vec::new(),
+            unavailable_leaders: Vec::new(),
         };
         router
             .populate_shard_table(get_or_create_open_shards_request)

@@ -26,8 +26,8 @@ use quickwit_proto::ingest::{Shard, ShardState};
 use quickwit_proto::metastore::{
     AcquireShardsSubrequest, AcquireShardsSubresponse, CloseShardsFailure,
     CloseShardsFailureReason, CloseShardsSubrequest, CloseShardsSuccess, DeleteShardsSubrequest,
-    EntityKind, ListShardsSubrequest, ListShardsSubresponse, MetastoreError, MetastoreResult,
-    OpenShardsSubrequest, OpenShardsSubresponse,
+    EntityKind, FenceShardsSubrequest, ListShardsSubrequest, ListShardsSubresponse, MetastoreError,
+    MetastoreResult, OpenShardsSubrequest, OpenShardsSubresponse,
 };
 use quickwit_proto::types::ShardId;
 use quickwit_proto::{queue_id, IndexUid, SourceId};
@@ -201,6 +201,23 @@ impl Shards {
         }
     }
 
+    pub(super) fn fence_shards(
+        &mut self,
+        subrequest: FenceShardsSubrequest,
+    ) -> MetastoreResult<MutationOccurred<()>> {
+        let mut mutation_occurred = false;
+
+        for shard_id in subrequest.shard_ids {
+            if let Some(shard) = self.shards.get_mut(&shard_id) {
+                if shard.shard_state().is_open() {
+                    shard.shard_state = ShardState::Fenced as i32;
+                    mutation_occurred = true;
+                }
+            }
+        }
+        Ok(mutation_occurred.into())
+    }
+
     pub(super) fn close_shards(
         &mut self,
         subrequest: CloseShardsSubrequest,
@@ -215,43 +232,19 @@ impl Shards {
             };
             return Ok(MutationOccurred::No(Either::Right(failure)));
         };
-        match subrequest.shard_state() {
-            ShardState::Fenced => {
-                shard.shard_state = ShardState::Fenced as i32;
-                info!(
-                    index_id=%self.index_uid.index_id(),
-                    source_id=%shard.source_id,
-                    shard_id=%shard.shard_id,
-                    "Closing shard.",
-                );
-            }
-            ShardState::Closed => {
-                shard.shard_state = ShardState::Closed as i32;
-                shard.replication_position_inclusive = shard
-                    .replication_position_inclusive
-                    .min(subrequest.replication_position_inclusive);
-                info!(
-                    index_id=%self.index_uid.index_id(),
-                    source_id=%shard.source_id,
-                    shard_id=%shard.shard_id,
-                    "closed shard",
-                );
-            }
-            other => {
-                let failure_message = format!(
-                    "invalid `shard_state` argument: expected `Fenced` or `Closed` state, got \
-                     `{other:?}`.",
-                );
-                let failure = CloseShardsFailure {
-                    index_uid: subrequest.index_uid,
-                    source_id: subrequest.source_id,
-                    shard_id: subrequest.shard_id,
-                    failure_reason: CloseShardsFailureReason::InvalidArgument as i32,
-                    failure_message,
-                };
-                return Ok(MutationOccurred::No(Either::Right(failure)));
-            }
+        let shard_state_before = shard.shard_state();
+        let replication_position_inclusive_before = shard.replication_position_inclusive.clone();
+
+        if shard.shard_state() == ShardState::Closed {
+            shard.replication_position_inclusive = shard
+                .replication_position_inclusive
+                .min(subrequest.replication_position_inclusive);
         }
+        shard.shard_state = ShardState::Closed as i32;
+
+        let mutation_occurred = shard_state_before != shard.shard_state()
+            || replication_position_inclusive_before != shard.replication_position_inclusive;
+
         let success = CloseShardsSuccess {
             index_uid: subrequest.index_uid,
             source_id: subrequest.source_id,
@@ -260,7 +253,11 @@ impl Shards {
             follower_id: shard.follower_id.clone(),
             publish_position_inclusive: shard.publish_position_inclusive.clone(),
         };
-        Ok(MutationOccurred::Yes(Either::Left(success)))
+        if mutation_occurred {
+            Ok(MutationOccurred::Yes(Either::Left(success)))
+        } else {
+            Ok(MutationOccurred::No(Either::Left(success)))
+        }
     }
 
     pub(super) fn delete_shards(
