@@ -17,6 +17,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+mod scheduling_logic;
+pub(crate) mod scheduling_logic_model;
+
 use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
