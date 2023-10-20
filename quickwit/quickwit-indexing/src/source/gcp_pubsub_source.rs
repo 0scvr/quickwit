@@ -31,7 +31,8 @@ use google_cloud_pubsub::subscription::Subscription;
 use quickwit_actors::{ActorContext, ActorExitStatus, Mailbox};
 use quickwit_common::rand::append_random_suffix;
 use quickwit_config::GcpPubSubSourceParams;
-use quickwit_metastore::checkpoint::{PartitionId, Position, SourceCheckpoint};
+use quickwit_metastore::checkpoint::{PartitionId, SourceCheckpoint};
+use quickwit_proto::types::Position;
 use serde_json::{json, Value as JsonValue};
 use tokio::time;
 use tracing::{debug, info, warn};
@@ -296,7 +297,7 @@ mod gcp_pubsub_emulator_tests {
     use quickwit_actors::Universe;
     use quickwit_config::{SourceConfig, SourceInputFormat, SourceParams};
     use quickwit_metastore::metastore_for_test;
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use serde_json::json;
 
     use super::*;

@@ -34,12 +34,11 @@ use quickwit_config::{
 };
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore::{
-    AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, EntityKind,
-    ListShardsRequest, ListShardsResponse, MetastoreError, MetastoreResult, OpenShardsRequest,
-    OpenShardsResponse,
+    AcquireShardsRequest, AcquireShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, EntityKind, ListShardsRequest, ListShardsResponse,
+    MetastoreError, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
 };
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPoolOptions};
 use sqlx::{ConnectOptions, Pool, Postgres, Transaction};
@@ -1243,13 +1242,6 @@ impl Metastore for PostgresqlMetastore {
         unimplemented!("`close_shards` is not implemented for PostgreSQL metastore")
     }
 
-    async fn close_shards(
-        &self,
-        _request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse> {
-        unimplemented!("`close_shards` is not implemented for PostgreSQL metastore")
-    }
-
     async fn list_shards(
         &self,
         _request: ListShardsRequest,
@@ -1446,7 +1438,7 @@ metastore_test_suite!(crate::PostgresqlMetastore);
 #[cfg(test)]
 mod tests {
     use quickwit_doc_mapper::tag_pruning::{no_tag, tag, TagFilterAst};
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use time::OffsetDateTime;
 
     use super::{build_query_filter, tags_filter_expression_helper};

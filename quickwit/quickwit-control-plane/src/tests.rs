@@ -34,7 +34,7 @@ use quickwit_indexing::IndexingService;
 use quickwit_metastore::{IndexMetadata, ListIndexesQuery, MockMetastore};
 use quickwit_proto::indexing::{ApplyIndexingPlanRequest, IndexingServiceClient};
 use quickwit_proto::metastore::ListShardsResponse;
-use quickwit_proto::NodeId;
+use quickwit_proto::types::NodeId;
 use serde_json::json;
 
 use crate::control_plane::{ControlPlane, CONTROL_PLAN_LOOP_INTERVAL};

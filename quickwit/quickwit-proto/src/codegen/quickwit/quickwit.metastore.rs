@@ -326,69 +326,6 @@ pub struct AcquireShardsSubresponse {
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CloseShardsRequest {
-    #[prost(message, repeated, tag = "1")]
-    pub subrequests: ::prost::alloc::vec::Vec<CloseShardsSubrequest>,
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CloseShardsSubrequest {
-    #[prost(string, tag = "1")]
-    pub index_uid: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub source_id: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "3")]
-    pub shard_id: u64,
-    #[prost(enumeration = "super::ingest::ShardState", tag = "4")]
-    pub shard_state: i32,
-    #[prost(uint64, optional, tag = "5")]
-    pub replication_position_inclusive: ::core::option::Option<u64>,
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CloseShardsResponse {
-    #[prost(message, repeated, tag = "1")]
-    pub successes: ::prost::alloc::vec::Vec<CloseShardsSuccess>,
-    #[prost(message, repeated, tag = "2")]
-    pub failures: ::prost::alloc::vec::Vec<CloseShardsFailure>,
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CloseShardsSuccess {
-    #[prost(string, tag = "1")]
-    pub index_uid: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub source_id: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "3")]
-    pub shard_id: u64,
-    #[prost(string, tag = "4")]
-    pub leader_id: ::prost::alloc::string::String,
-    #[prost(string, optional, tag = "5")]
-    pub follower_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "6")]
-    pub publish_position_inclusive: ::prost::alloc::string::String,
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CloseShardsFailure {
-    #[prost(string, tag = "1")]
-    pub index_uid: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub source_id: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "3")]
-    pub shard_id: u64,
-    #[prost(enumeration = "CloseShardsFailureKind", tag = "4")]
-    pub failure_kind: i32,
-    #[prost(string, tag = "5")]
-    pub failure_message: ::prost::alloc::string::String,
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteShardsRequest {
     #[prost(message, repeated, tag = "1")]
     pub subrequests: ::prost::alloc::vec::Vec<DeleteShardsSubrequest>,
@@ -499,34 +436,6 @@ impl SourceType {
             "PULSAR" => Some(Self::Pulsar),
             "VEC" => Some(Self::Vec),
             "VOID" => Some(Self::Void),
-            _ => None,
-        }
-    }
-}
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum CloseShardsFailureKind {
-    InvalidArgument = 0,
-    NotFound = 1,
-}
-impl CloseShardsFailureKind {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            CloseShardsFailureKind::InvalidArgument => "INVALID_ARGUMENT",
-            CloseShardsFailureKind::NotFound => "NOT_FOUND",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "INVALID_ARGUMENT" => Some(Self::InvalidArgument),
-            "NOT_FOUND" => Some(Self::NotFound),
             _ => None,
         }
     }
@@ -1229,33 +1138,6 @@ pub mod metastore_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        pub async fn close_shards(
-            &mut self,
-            request: impl tonic::IntoRequest<super::CloseShardsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::CloseShardsResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/quickwit.metastore.MetastoreService/CloseShards",
-            );
-            let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("quickwit.metastore.MetastoreService", "CloseShards"),
-                );
-            self.inner.unary(req, path, codec).await
-        }
         pub async fn delete_shards(
             &mut self,
             request: impl tonic::IntoRequest<super::DeleteShardsRequest>,
@@ -1459,13 +1341,6 @@ pub mod metastore_service_server {
             request: tonic::Request<super::AcquireShardsRequest>,
         ) -> std::result::Result<
             tonic::Response<super::AcquireShardsResponse>,
-            tonic::Status,
-        >;
-        async fn close_shards(
-            &self,
-            request: tonic::Request<super::CloseShardsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::CloseShardsResponse>,
             tonic::Status,
         >;
         async fn delete_shards(
@@ -2512,52 +2387,6 @@ pub mod metastore_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = AcquireShardsSvc(inner);
-                        let codec = tonic::codec::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.unary(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                "/quickwit.metastore.MetastoreService/CloseShards" => {
-                    #[allow(non_camel_case_types)]
-                    struct CloseShardsSvc<T: MetastoreService>(pub Arc<T>);
-                    impl<
-                        T: MetastoreService,
-                    > tonic::server::UnaryService<super::CloseShardsRequest>
-                    for CloseShardsSvc<T> {
-                        type Response = super::CloseShardsResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<super::CloseShardsRequest>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                (*inner).close_shards(request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let inner = inner.0;
-                        let method = CloseShardsSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

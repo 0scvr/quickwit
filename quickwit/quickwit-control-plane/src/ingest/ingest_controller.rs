@@ -32,9 +32,9 @@ use quickwit_proto::control_plane::{
 };
 use quickwit_proto::ingest::ingester::{IngesterService, PingRequest};
 use quickwit_proto::ingest::IngestV2Error;
+use quickwit_proto::metastore;
 use quickwit_proto::metastore::{EntityKind, MetastoreError};
-use quickwit_proto::types::NodeId;
-use quickwit_proto::{metastore, IndexUid};
+use quickwit_proto::types::{IndexUid, NodeId};
 use rand::seq::SliceRandom;
 use tokio::time::timeout;
 

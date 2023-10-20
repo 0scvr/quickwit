@@ -31,14 +31,14 @@ pub mod test_suite {
     use quickwit_config::{IndexConfig, SourceConfig, SourceInputFormat, SourceParams};
     use quickwit_doc_mapper::tag_pruning::{no_tag, tag, TagFilterAst};
     use quickwit_proto::metastore::{DeleteQuery, EntityKind, MetastoreError, SourceType};
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::{IndexUid, Position};
     use quickwit_query::query_ast::qast_json_helper;
     use time::OffsetDateTime;
     use tokio::time::sleep;
     use tracing::{error, info};
 
     use crate::checkpoint::{
-        IndexCheckpointDelta, PartitionId, Position, SourceCheckpoint, SourceCheckpointDelta,
+        IndexCheckpointDelta, PartitionId, SourceCheckpoint, SourceCheckpointDelta,
     };
     use crate::{
         ListIndexesQuery, ListSplitsQuery, Metastore, Split, SplitMaturity, SplitMetadata,

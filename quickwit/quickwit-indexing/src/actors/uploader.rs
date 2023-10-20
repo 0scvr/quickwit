@@ -33,7 +33,7 @@ use quickwit_common::pubsub::EventBroker;
 use quickwit_metastore::checkpoint::IndexCheckpointDelta;
 use quickwit_metastore::{Metastore, SplitMetadata};
 use quickwit_proto::search::{ReportSplit, ReportSplitsRequest};
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 use quickwit_storage::SplitPayloadBuilder;
 use serde::Serialize;
 use tantivy::TrackedObject;

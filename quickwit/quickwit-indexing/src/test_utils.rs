@@ -35,7 +35,7 @@ use quickwit_config::{
 use quickwit_doc_mapper::DocMapper;
 use quickwit_ingest::{init_ingest_api, IngesterPool, QUEUES_DIR_NAME};
 use quickwit_metastore::{Metastore, MetastoreResolver, Split, SplitMetadata, SplitState};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use quickwit_storage::{Storage, StorageResolver};
 use serde_json::Value as JsonValue;
 

@@ -18,8 +18,6 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 mod fetch;
-mod gc;
-mod ingest_metastore;
 mod ingester;
 mod models;
 mod mrecord;
@@ -34,7 +32,6 @@ use quickwit_proto::ingest::ingester::IngesterServiceClient;
 use quickwit_proto::types::NodeId;
 
 pub use self::fetch::MultiFetchStream;
-pub use self::ingest_metastore::IngestMetastore;
 pub use self::ingester::Ingester;
 pub use self::mrecord::{decoded_mrecords, MRecord};
 pub use self::router::IngestRouter;

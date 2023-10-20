@@ -28,7 +28,8 @@ use quickwit_metastore::{
     IndexMetadata, ListSplitsQuery, Metastore, SplitInfo, SplitMetadata, SplitState,
 };
 use quickwit_proto::metastore::{EntityKind, MetastoreError};
-use quickwit_proto::{IndexUid, ServiceError, ServiceErrorCode};
+use quickwit_proto::types::IndexUid;
+use quickwit_proto::{ServiceError, ServiceErrorCode};
 use quickwit_storage::{StorageResolver, StorageResolverError};
 use thiserror::Error;
 use tracing::{error, info};

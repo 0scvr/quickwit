@@ -62,7 +62,7 @@ use quickwit_config::SearcherConfig;
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_metastore::{ListSplitsQuery, Metastore, SplitMetadata, SplitState};
 use quickwit_proto::search::{PartialHit, SearchRequest, SearchResponse, SplitIdAndFooterOffsets};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use quickwit_storage::StorageResolver;
 pub use service::SearcherContext;
 use tantivy::DocAddress;

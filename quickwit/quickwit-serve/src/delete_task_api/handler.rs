@@ -24,7 +24,7 @@ use quickwit_janitor::error::JanitorError;
 use quickwit_metastore::Metastore;
 use quickwit_proto::metastore::{DeleteQuery, DeleteTask, MetastoreResult};
 use quickwit_proto::search::SearchRequest;
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use quickwit_query::query_ast::{query_ast_from_user_text, QueryAst};
 use serde::Deserialize;
 use warp::{Filter, Rejection};

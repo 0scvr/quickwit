@@ -26,7 +26,7 @@ use futures::Future;
 use quickwit_common::{PrettySample, Progress};
 use quickwit_metastore::{ListSplitsQuery, Metastore, SplitInfo, SplitMetadata, SplitState};
 use quickwit_proto::metastore::MetastoreError;
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use quickwit_storage::{BulkDeleteError, Storage};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -330,7 +330,7 @@ mod tests {
         metastore_for_test, ListSplitsQuery, MockMetastore, SplitMetadata, SplitState,
     };
     use quickwit_proto::metastore::EntityKind;
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use quickwit_storage::{
         storage_for_test, BulkDeleteError, DeleteFailure, MockStorage, PutPayload,
     };

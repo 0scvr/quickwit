@@ -45,7 +45,7 @@ use quickwit_proto::indexing::{
     ApplyIndexingPlanRequest, ApplyIndexingPlanResponse, IndexingError, IndexingPipelineId,
     IndexingTask,
 };
-use quickwit_proto::{IndexId, IndexUid};
+use quickwit_proto::types::{IndexId, IndexUid};
 use quickwit_storage::StorageResolver;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;

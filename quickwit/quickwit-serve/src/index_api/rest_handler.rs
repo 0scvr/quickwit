@@ -32,7 +32,7 @@ use quickwit_metastore::{
     IndexMetadata, ListIndexesQuery, ListSplitsQuery, Metastore, Split, SplitInfo, SplitState,
 };
 use quickwit_proto::metastore::{EntityKind, MetastoreError, MetastoreResult};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

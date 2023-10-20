@@ -28,11 +28,11 @@ use quickwit_common::retry::RetryParams;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{
-    AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, ListShardsRequest,
-    ListShardsResponse, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
+    AcquireShardsRequest, AcquireShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, MetastoreResult,
+    OpenShardsRequest, OpenShardsResponse,
 };
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 
 use self::retry::retry;
 use crate::checkpoint::IndexCheckpointDelta;
@@ -298,16 +298,6 @@ impl Metastore for RetryingMetastore {
     ) -> MetastoreResult<AcquireShardsResponse> {
         retry(&self.retry_params, || async {
             self.inner.acquire_shards(request.clone()).await
-        })
-        .await
-    }
-
-    async fn close_shards(
-        &self,
-        request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse> {
-        retry(&self.retry_params, || async {
-            self.inner.close_shards(request.clone()).await
         })
         .await
     }

@@ -38,12 +38,11 @@ use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore::{
-    AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, EntityKind,
-    ListShardsRequest, ListShardsResponse, MetastoreError, MetastoreResult, OpenShardsRequest,
-    OpenShardsResponse,
+    AcquireShardsRequest, AcquireShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, EntityKind, ListShardsRequest, ListShardsResponse,
+    MetastoreError, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
 };
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 use time::OffsetDateTime;
 
 use crate::checkpoint::IndexCheckpointDelta;
@@ -330,12 +329,6 @@ pub trait Metastore: fmt::Debug + Send + Sync + 'static {
         &self,
         request: AcquireShardsRequest,
     ) -> MetastoreResult<AcquireShardsResponse>;
-
-    /// Closes some shards, i.e. changes their state from `Open` to `Closing` or `Closed`.
-    async fn close_shards(
-        &self,
-        request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse>;
 
     /// Lists the shards of one or multiple indexes.
     async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse>;

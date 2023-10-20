@@ -28,7 +28,7 @@ use quickwit_common::pubsub::EventBroker;
 use quickwit_common::temp_dir::{self};
 use quickwit_config::IndexConfig;
 use quickwit_metastore::{ListIndexesQuery, Metastore};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use quickwit_search::SearchJobPlacer;
 use quickwit_storage::StorageResolver;
 use serde::Serialize;

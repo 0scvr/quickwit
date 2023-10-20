@@ -26,7 +26,7 @@ use itertools::Itertools;
 use quickwit_actors::{Actor, ActorContext, Handler};
 use quickwit_config::IndexConfig;
 use quickwit_metastore::{ListIndexesQuery, Metastore};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use serde::Serialize;
 use tracing::{debug, error, info};
 

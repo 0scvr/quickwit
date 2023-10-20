@@ -585,7 +585,7 @@ mod tests {
     use quickwit_doc_mapper::{default_doc_mapper_for_test, DefaultDocMapper};
     use quickwit_metastore::{IndexMetadata, MockMetastore};
     use quickwit_proto::metastore::MetastoreError;
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use quickwit_storage::RamStorage;
 
     use super::{IndexingPipeline, *};

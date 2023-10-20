@@ -480,7 +480,7 @@ mod tests {
     use quickwit_doc_mapper::default_doc_mapper_for_test;
     use quickwit_metastore::MockMetastore;
     use quickwit_proto::indexing::IndexingPipelineId;
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use quickwit_storage::RamStorage;
 
     use crate::actors::merge_pipeline::{MergePipeline, MergePipelineParams};

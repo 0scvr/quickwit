@@ -32,10 +32,9 @@ use quickwit_common::uri::Uri as QuickwitUri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{
     serde_utils as metastore_serde_utils, AcquireShardsRequest, AcquireShardsResponse,
-    AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CreateIndexRequest,
-    DeleteIndexRequest, DeleteQuery, DeleteShardsRequest, DeleteShardsResponse,
-    DeleteSourceRequest, DeleteSplitsRequest, DeleteTask, IndexMetadataRequest,
-    LastDeleteOpstampRequest, ListAllSplitsRequest, ListDeleteTasksRequest,
+    AddSourceRequest, CreateIndexRequest, DeleteIndexRequest, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteSourceRequest, DeleteSplitsRequest, DeleteTask,
+    IndexMetadataRequest, LastDeleteOpstampRequest, ListAllSplitsRequest, ListDeleteTasksRequest,
     ListIndexesMetadatasRequest, ListShardsRequest, ListShardsResponse, ListSplitsRequest,
     ListStaleSplitsRequest, MarkSplitsForDeletionRequest, MetastoreError, MetastoreResult,
     MetastoreServiceClient, OpenShardsRequest, OpenShardsResponse, PublishSplitsRequest,
@@ -44,7 +43,8 @@ use quickwit_proto::metastore::{
 };
 use quickwit_proto::tonic::codegen::InterceptedService;
 use quickwit_proto::tonic::Status;
-use quickwit_proto::{IndexUid, PublishToken, SpanContextInterceptor};
+use quickwit_proto::types::{IndexUid, PublishToken};
+use quickwit_proto::SpanContextInterceptor;
 use tower::timeout::error::Elapsed;
 
 use crate::checkpoint::IndexCheckpointDelta;
@@ -572,19 +572,6 @@ impl Metastore for MetastoreGrpcClient {
             .underlying
             .clone()
             .acquire_shards(request)
-            .await
-            .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
-        Ok(response.into_inner())
-    }
-
-    async fn close_shards(
-        &self,
-        request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse> {
-        let response = self
-            .underlying
-            .clone()
-            .close_shards(request)
             .await
             .map_err(|tonic_error| parse_grpc_error(&tonic_error))?;
         Ok(response.into_inner())

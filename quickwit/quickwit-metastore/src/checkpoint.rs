@@ -25,7 +25,7 @@ use std::iter::FromIterator;
 use std::ops::Range;
 use std::sync::Arc;
 
-use quickwit_proto::SourceId;
+use quickwit_proto::types::{Position, SourceId};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -79,84 +79,96 @@ impl From<i64> for PartitionId {
     }
 }
 
-/// Marks a position within a specific partition of a source.
-///
-/// The nature of the position may very depending on the source.
-/// Each source needs to encode it as a `String` in such a way that
-/// the lexicographical order matches the natural order of the
-/// position.
-///
-/// For instance, for u64, a 20-left-padded decimal representation
-/// can be used. Alternatively, a base64 representation of their
-/// Big Endian representation can be used.
-///
-/// The empty string can be used to represent the beginning of the source,
-/// if no position makes sense. It can be built via `Position::default()`.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
-pub enum Position {
-    #[default]
-    Beginning,
-    Offset(Arc<String>),
-}
+// /// Marks a position within a specific partition of a source.
+// ///
+// /// The nature of the position may very depending on the source.
+// /// Each source needs to encode it as a `String` in such a way that
+// /// the lexicographical order matches the natural order of the
+// /// position.
+// ///
+// /// For instance, for u64, a 20-left-padded decimal representation
+// /// can be used. Alternatively, a base64 representation of their
+// /// Big Endian representation can be used.
+// ///
+// /// The empty string can be used to represent the beginning of the source,
+// /// if no position makes sense. It can be built via `Position::default()`.
+// #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+// pub enum Position {
+//     #[default]
+//     Beginning,
+//     Offset(Arc<String>),
+//     Eof,
+// }
 
-impl Position {
-    /// String representation of the position.
-    pub fn as_str(&self) -> &str {
-        match self {
-            Position::Beginning => "",
-            Position::Offset(offset) => offset,
-        }
-    }
+// impl Position {
+//     pub fn is_beginning(&self) -> bool {
+//         matches!(self, Position::Beginning)
+//     }
 
-    /// Returns the position as a `i64` (Kafka source).
-    pub fn as_i64(&self) -> Option<i64> {
-        match self {
-            Position::Beginning => None,
-            Position::Offset(offset) => offset.parse::<i64>().ok(),
-        }
-    }
+//     pub fn is_eof(&self) -> bool {
+//         matches!(self, Position::Eof)
+//     }
 
-    /// Returns the position as a `u64` (ingest).
-    pub fn as_u64(&self) -> Option<u64> {
-        match self {
-            Position::Beginning => None,
-            Position::Offset(offset) => offset.parse::<u64>().ok(),
-        }
-    }
-}
+//     /// String representation of the position.
+//     pub fn as_str(&self) -> &str {
+//         match self {
+//             Position::Beginning => "",
+//             Position::Offset(offset) => offset,
+//             Position::Eof => "EOF",
+//         }
+//     }
 
-impl From<i64> for Position {
-    fn from(offset: i64) -> Self {
-        assert!(offset >= 0);
-        let offset_str = format!("{offset:0>20}");
-        Position::Offset(Arc::new(offset_str))
-    }
-}
+//     /// Returns the position as a `i64` (Kafka source).
+//     pub fn as_i64(&self) -> Option<i64> {
+//         match self {
+//             Position::Beginning => None,
+//             Position::Offset(offset) => offset.parse::<i64>().ok(),
+//             Position::Eof => None,
+//         }
+//     }
 
-impl From<u64> for Position {
-    fn from(offset: u64) -> Self {
-        let offset_str = format!("{offset:0>20}");
-        Position::Offset(Arc::new(offset_str))
-    }
-}
+//     /// Returns the position as a `u64` (ingest).
+//     pub fn as_u64(&self) -> Option<u64> {
+//         match self {
+//             Position::Beginning => None,
+//             Position::Offset(offset) => offset.parse::<u64>().ok(),
+//             Position::Eof => None,
+//         }
+//     }
+// }
 
-impl From<String> for Position {
-    fn from(position_str: String) -> Self {
-        match position_str.as_str() {
-            "" => Position::Beginning,
-            _ => Position::Offset(Arc::new(position_str)),
-        }
-    }
-}
+// impl From<i64> for Position {
+//     fn from(offset: i64) -> Self {
+//         assert!(offset >= 0);
+//         let offset_str = format!("{offset:0>20}");
+//         Position::Offset(Arc::new(offset_str))
+//     }
+// }
 
-impl From<&str> for Position {
-    fn from(position_str: &str) -> Self {
-        match position_str {
-            "" => Position::Beginning,
-            _ => Position::Offset(Arc::new(position_str.to_string())),
-        }
-    }
-}
+// impl From<u64> for Position {
+//     fn from(offset: u64) -> Self {
+//         let offset_str = format!("{offset:0>20}");
+//         Position::Offset(Arc::new(offset_str))
+//     }
+// }
+
+// impl From<String> for Position {
+//     fn from(position_str: String) -> Self {
+//         match position_str.as_str() {
+//             "" => Position::Beginning,
+//             _ => Position::Offset(Arc::new(position_str)),
+//         }
+//     }
+// }
+
+// impl From<&str> for Position {
+//     fn from(position_str: &str) -> Self {
+//         match position_str {
+//             "" => Position::Beginning,
+//             _ => Position::Offset(Arc::new(position_str.to_string())),
+//         }
+//     }
+// }
 
 /// A partition delta represents an interval (from, to] over a partition of a source.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

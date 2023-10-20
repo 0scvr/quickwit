@@ -29,8 +29,8 @@ use itertools::Itertools;
 use oneshot;
 use quickwit_actors::{ActorExitStatus, Mailbox};
 use quickwit_config::KafkaSourceParams;
-use quickwit_metastore::checkpoint::{PartitionId, Position, SourceCheckpoint};
-use quickwit_proto::IndexUid;
+use quickwit_metastore::checkpoint::{PartitionId, SourceCheckpoint};
+use quickwit_proto::types::{IndexUid, Position};
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::{
     BaseConsumer, CommitMode, Consumer, ConsumerContext, DefaultConsumerContext, Rebalance,
@@ -379,11 +379,14 @@ impl KafkaSource {
                 .unwrap_or(Position::Beginning);
             let next_offset = match &current_position {
                 Position::Beginning => Offset::Beginning,
-                Position::Offset(_) => {
-                    let offset = current_position
+                Position::Offset(offset) => {
+                    let offset = offset
                         .as_i64()
-                        .expect("Kafka offset should be stored as i64.");
+                        .expect("Kafka offset should be stored as i64");
                     Offset::Offset(offset + 1)
+                }
+                Position::Eof => {
+                    panic!("Kafka partition position should never be EOF")
                 }
             };
             self.state
@@ -786,7 +789,7 @@ mod kafka_broker_tests {
     use quickwit_config::{IndexConfig, SourceConfig, SourceInputFormat, SourceParams};
     use quickwit_metastore::checkpoint::{IndexCheckpointDelta, SourceCheckpointDelta};
     use quickwit_metastore::{metastore_for_test, Metastore, SplitMetadata};
-    use quickwit_proto::IndexUid;
+    use quickwit_proto::types::IndexUid;
     use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
     use rdkafka::client::DefaultClientContext;
     use rdkafka::message::ToBytes;

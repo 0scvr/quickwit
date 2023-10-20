@@ -22,7 +22,8 @@ use std::fmt;
 use quickwit_common::retry::Retryable;
 use serde::{Deserialize, Serialize};
 
-use crate::{queue_id, IndexId, QueueId, ServiceError, ServiceErrorCode, SourceId, SplitId};
+use crate::types::{IndexId, QueueId, SourceId, SplitId};
+use crate::{ServiceError, ServiceErrorCode};
 
 pub mod events;
 
@@ -206,18 +207,6 @@ impl SourceType {
             SourceType::Vec => "vec",
             SourceType::Void => "void",
         }
-    }
-}
-
-impl CloseShardsSuccess {
-    pub fn queue_id(&self) -> QueueId {
-        queue_id(&self.index_uid, &self.source_id, self.shard_id)
-    }
-}
-
-impl CloseShardsFailure {
-    pub fn queue_id(&self) -> QueueId {
-        queue_id(&self.index_uid, &self.source_id, self.shard_id)
     }
 }
 

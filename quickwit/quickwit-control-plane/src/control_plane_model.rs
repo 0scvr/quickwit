@@ -28,9 +28,9 @@ use quickwit_config::{SourceConfig, INGEST_SOURCE_ID};
 use quickwit_metastore::{IndexMetadata, ListIndexesQuery, Metastore};
 use quickwit_proto::control_plane::ControlPlaneResult;
 use quickwit_proto::ingest::{Shard, ShardState};
+use quickwit_proto::metastore;
 use quickwit_proto::metastore::{EntityKind, ListShardsSubrequest, MetastoreError};
-use quickwit_proto::types::IndexId;
-use quickwit_proto::{metastore, IndexUid, NodeId, NodeIdRef, ShardId, SourceId};
+use quickwit_proto::types::{IndexId, IndexUid, NodeId, NodeIdRef, ShardId, SourceId};
 use serde::Serialize;
 use tracing::{error, info};
 
@@ -511,7 +511,7 @@ mod tests {
             source_id: source_id.clone(),
             shard_id: 2,
             leader_id: "test-leader-0".to_string(),
-            shard_state: ShardState::Closing as i32,
+            shard_state: ShardState::Unavailable as i32,
             ..Default::default()
         };
         let shard_03 = Shard {

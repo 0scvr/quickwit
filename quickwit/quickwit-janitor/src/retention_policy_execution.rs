@@ -23,7 +23,7 @@ use quickwit_actors::ActorContext;
 use quickwit_common::PrettySample;
 use quickwit_config::RetentionPolicy;
 use quickwit_metastore::{ListSplitsQuery, Metastore, SplitMetadata, SplitState};
-use quickwit_proto::IndexUid;
+use quickwit_proto::types::IndexUid;
 use time::OffsetDateTime;
 use tracing::{info, warn};
 

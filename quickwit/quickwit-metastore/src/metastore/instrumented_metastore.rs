@@ -24,11 +24,11 @@ use itertools::Itertools;
 use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore::{
-    AcquireShardsRequest, AcquireShardsResponse, CloseShardsRequest, CloseShardsResponse,
-    DeleteQuery, DeleteShardsRequest, DeleteShardsResponse, DeleteTask, ListShardsRequest,
-    ListShardsResponse, MetastoreResult, OpenShardsRequest, OpenShardsResponse,
+    AcquireShardsRequest, AcquireShardsResponse, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteTask, ListShardsRequest, ListShardsResponse, MetastoreResult,
+    OpenShardsRequest, OpenShardsResponse,
 };
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 
 use crate::checkpoint::IndexCheckpointDelta;
 use crate::{IndexMetadata, ListIndexesQuery, ListSplitsQuery, Metastore, Split, SplitMetadata};
@@ -334,16 +334,6 @@ impl Metastore for InstrumentedMetastore {
         instrument!(
             self.underlying.acquire_shards(request).await,
             [acquire_shards, ""]
-        );
-    }
-
-    async fn close_shards(
-        &self,
-        request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse> {
-        instrument!(
-            self.underlying.close_shards(request).await,
-            [close_shards, ""]
         );
     }
 

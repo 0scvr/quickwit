@@ -49,7 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Ingest service
     let mut prost_config = prost_build::Config::default();
-    prost_config.bytes(["DocBatchV2.doc_buffer", "MRecordBatch.mrecord_buffer"]);
+    prost_config
+        .bytes(["DocBatchV2.doc_buffer", "MRecordBatch.mrecord_buffer"])
+        .extern_path(".quickwit.ingest.Position", "crate::types::Position");
 
     Codegen::run_with_config(
         &[
@@ -68,7 +70,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // "Classic" prost + tonic codegen for metastore and search services.
     let mut prost_config = prost_build::Config::default();
     prost_config
-        .bytes(["DocBatchV2.doc_buffer", "MRecordBatch.mrecord_buffer"])
+        .bytes([
+            "DocBatchV2.doc_buffer",
+            "MRecordBatch.mrecord_buffer",
+            "Position.position",
+        ])
+        .extern_path(".quickwit.ingest.Position", "crate::types::Position")
         .protoc_arg("--experimental_allow_proto3_optional");
 
     tonic_build::configure()
@@ -89,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .field_attribute(
             "Shard.publish_position_inclusive",
-            "#[serde(default, skip_serializing_if = \"String::is_empty\")]",
+            "#[serde(default, skip_serializing_if = \"Option::is_none\")]",
         )
         .field_attribute(
             "Shard.publish_token",

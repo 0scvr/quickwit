@@ -26,12 +26,11 @@ use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::control_plane::{ControlPlaneService, ControlPlaneServiceClient};
 use quickwit_proto::metastore::{
     serde_utils as metastore_serde_utils, AcquireShardsRequest, AcquireShardsResponse,
-    AddSourceRequest, CloseShardsRequest, CloseShardsResponse, CreateIndexRequest,
-    DeleteIndexRequest, DeleteQuery, DeleteShardsRequest, DeleteShardsResponse,
-    DeleteSourceRequest, DeleteTask, ListShardsRequest, ListShardsResponse, MetastoreResult,
-    OpenShardsRequest, OpenShardsResponse, ToggleSourceRequest,
+    AddSourceRequest, CreateIndexRequest, DeleteIndexRequest, DeleteQuery, DeleteShardsRequest,
+    DeleteShardsResponse, DeleteSourceRequest, DeleteTask, ListShardsRequest, ListShardsResponse,
+    MetastoreResult, OpenShardsRequest, OpenShardsResponse, ToggleSourceRequest,
 };
-use quickwit_proto::{IndexUid, PublishToken};
+use quickwit_proto::types::{IndexUid, PublishToken};
 
 use crate::checkpoint::IndexCheckpointDelta;
 use crate::{IndexMetadata, ListIndexesQuery, ListSplitsQuery, Metastore, Split, SplitMetadata};
@@ -240,13 +239,6 @@ impl Metastore for ControlPlaneMetastore {
 
     async fn list_shards(&self, request: ListShardsRequest) -> MetastoreResult<ListShardsResponse> {
         self.metastore.list_shards(request).await
-    }
-
-    async fn close_shards(
-        &self,
-        request: CloseShardsRequest,
-    ) -> MetastoreResult<CloseShardsResponse> {
-        self.metastore.close_shards(request).await
     }
 
     async fn delete_shards(
