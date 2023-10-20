@@ -20,25 +20,36 @@
 mod scheduling_logic;
 pub(crate) mod scheduling_logic_model;
 
+use quickwit_proto::{IndexUid, ShardId};
+use scheduling_logic_model::SourceOrd;
+use scheduling_logic_model::NodeOrd;
+
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::fmt;
+use std::num::NonZeroU32;
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use fnv::{FnvHashMap, FnvHashSet};
 use itertools::Itertools;
+use quickwit_config::SourceConfig;
 use quickwit_metastore::Metastore;
 use quickwit_proto::indexing::{ApplyIndexingPlanRequest, IndexingService, IndexingTask};
 use quickwit_proto::NodeId;
+use quickwit_proto::metastore::SourceType;
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
 use crate::control_plane_model::ControlPlaneModel;
-use crate::indexing_plan::{
-    build_physical_indexing_plan, list_indexing_tasks, PhysicalIndexingPlan,
-};
-use crate::{IndexerNodeInfo, IndexerPool};
+use crate::indexing_plan::PhysicalIndexingPlan;
+use crate::indexing_scheduler::scheduling_logic_model::SchedulingSolution;
+use crate::indexing_scheduler::scheduling_logic_model::{SchedulingProblem, Load};
+use crate::{IndexerNodeInfo, IndexerPool, SourceUid};
+
+const PIPELINE_FULL_LOAD: Load = 1_000u32;
 
 pub(crate) const MIN_DURATION_BETWEEN_SCHEDULING: Duration =
     if cfg!(any(test, feature = "testsuite")) {
@@ -54,6 +65,30 @@ pub struct IndexingSchedulerState {
     pub last_applied_physical_plan: Option<PhysicalIndexingPlan>,
     #[serde(skip)]
     pub last_applied_plan_timestamp: Option<Instant>,
+}
+
+fn create_shard_to_node_map(physical_plan: &PhysicalIndexingPlan,
+                            id_to_ord_map: &IdToOrdMap) -> FnvHashMap<SourceOrd, FnvHashMap<ShardId, NodeOrd>> {
+    let mut source_to_shard_to_node: FnvHashMap<SourceOrd, FnvHashMap<ShardId, NodeOrd>> = Default::default();
+    for (node_id, indexing_tasks) in physical_plan.indexing_tasks_per_node().iter() {
+        for indexing_task in indexing_tasks {
+            let index_uid = IndexUid::from(indexing_task.index_uid.clone());
+            let Some(indexer_ord) = id_to_ord_map.indexer_ord(node_id) else { continue; };
+            let source_uid = SourceUid {
+                index_uid,
+                source_id: indexing_task.source_id.clone(),
+            };
+            let Some(source_ord) = id_to_ord_map.source_ord(&source_uid) else {
+                continue;
+            };
+            for &shard_id in &indexing_task.shard_ids {
+                source_to_shard_to_node.entry(source_ord)
+                    .or_default()
+                    .insert(shard_id, indexer_ord);
+            }
+        }
+    }
+    source_to_shard_to_node
 }
 
 /// The [`IndexingScheduler`] is responsible for listing indexing tasks and assiging them to
@@ -118,6 +153,243 @@ impl fmt::Debug for IndexingScheduler {
     }
 }
 
+
+fn populate_problem(source_uid: &SourceUid, source_config: &SourceConfig, model: &ControlPlaneModel, problem: &mut SchedulingProblem) -> Option<SourceOrd> {
+    match source_config.source_type() {
+        SourceType::Cli | SourceType::File | SourceType::Vec | SourceType::Void => {
+            None
+        }
+        SourceType::IngestV1 => {
+            // TODO ingest v1 is scheduled differently
+            None
+        }
+        SourceType::IngestV2 => {
+            let shards = model.list_shards(&source_uid);
+            let num_shards = shards.len() as u32;
+            // TODO estimate the load per shard.
+            let source_id = problem.add_source(num_shards, 1_000);
+            Some(source_id)
+        }
+        SourceType::Kafka
+        | SourceType::Kinesis
+        | SourceType::GcpPubsub
+        | SourceType::Nats
+        | SourceType::Pulsar => {
+            let num_pipelines = source_config.desired_num_pipelines.get();
+            let source_id = problem.add_source(num_pipelines as u32, PIPELINE_FULL_LOAD);
+            Some(source_id)
+        }
+    }
+}
+
+#[derive(Default)]
+struct IdToOrdMap {
+    indexer_uids: Vec<String>,
+    source_uids: Vec<SourceUid>,
+    indexer_uid_to_indexer_ord: FnvHashMap<String, NodeOrd>,
+    source_uid_to_source_ord: FnvHashMap<SourceUid, SourceOrd>,
+}
+
+impl IdToOrdMap {
+    pub fn add_source_uid(&mut self, source_uid: SourceUid) -> SourceOrd {
+        let source_ord = self.source_uid_to_source_ord.len() as SourceOrd;
+        self.source_uid_to_source_ord.insert(source_uid.clone(), source_ord);
+        self.source_uids.push(source_uid);
+        source_ord
+    }
+
+    pub fn source_uid(&self, source_ord: SourceOrd) -> &SourceUid {
+        &self.source_uids[source_ord as usize]
+    }
+
+    pub fn source_ord(&self, source_uid: &SourceUid) -> Option<SourceOrd> {
+        self.source_uid_to_source_ord.get(source_uid).copied()
+    }
+    pub fn indexer_id(&self, node_ord: NodeOrd) -> &String {
+        &self.indexer_uids[node_ord]
+    }
+
+    pub fn indexer_ord(&self, indexer_uid: &str) -> Option<NodeOrd> {
+        self.indexer_uid_to_indexer_ord.get(indexer_uid).copied()
+    }
+
+    pub fn add_indexer_id(&mut self, node_id: String) -> NodeOrd {
+        let indexer_ord = self.indexer_uids.len() as NodeOrd;
+        self.indexer_uid_to_indexer_ord.insert(node_id.clone(), indexer_ord);
+        self.indexer_uids.push(node_id);
+        indexer_ord
+    }
+
+    pub fn source_ords(&self) -> Range<SourceOrd> {
+        0..self.source_uids.len() as SourceOrd
+    }
+
+    pub fn num_indexers(&self) -> usize {
+        self.indexer_uids.len()
+    }
+}
+
+
+fn convert_physical_plan_to_solution(plan: &PhysicalIndexingPlan, id_to_ord_map: &IdToOrdMap, solution: &mut SchedulingSolution) {
+    for (indexer_id, indexing_tasks) in plan.indexing_tasks_per_node() {
+        if let Some(node_ord) = id_to_ord_map.indexer_ord(indexer_id) {
+            let node_assignment = &mut solution.node_assignments[node_ord as usize];
+            for indexing_task in indexing_tasks {
+                let source_uid = SourceUid {
+                    index_uid: IndexUid::from(indexing_task.index_uid.clone()),
+                    source_id: indexing_task.source_id.clone(),
+                };
+                if let Some(source_ord) = id_to_ord_map.source_ord(&source_uid) {
+                    node_assignment.add_shard(source_ord, indexing_task.shard_ids.len() as u32);
+                }
+            }
+        }
+    }
+}
+
+
+fn convert_scheduling_solution_to_physical_plan(solution: SchedulingSolution,
+                                                id_to_ord_map: &IdToOrdMap,
+                                                model: &ControlPlaneModel,
+                                                previous_plan_opt: Option<&PhysicalIndexingPlan>,
+) -> PhysicalIndexingPlan {
+    let mut previous_shard_to_node_map: FnvHashMap<SourceOrd, FnvHashMap<ShardId, NodeOrd>> = previous_plan_opt
+        .map(|previous_plan| {
+            create_shard_to_node_map(previous_plan, id_to_ord_map)
+        })
+        .unwrap_or_default();
+
+    let mut node_to_source_to_shard_map: Vec<FnvHashMap<SourceOrd, Vec<ShardId>>> = std::iter::repeat_with(Default::default).take(id_to_ord_map.num_indexers()).collect();
+
+    for source_ord in id_to_ord_map.source_ords() {
+        let mut node_num_shards: FnvHashMap<NodeOrd, NonZeroU32> = solution.node_shards(source_ord).collect();
+
+        let source_uid = id_to_ord_map.source_uid(source_ord);
+        let shard_ids: Vec<ShardId> = model.list_shards(source_uid);
+
+        let shard_to_node_ord = previous_shard_to_node_map.remove(&source_ord).unwrap_or_default();
+
+        let mut unassigned_shard_ids: Vec<ShardId> = Vec::new();
+        for shard_id in shard_ids {
+            if let Some(previous_node_ord) = shard_to_node_ord.get(&shard_id).cloned() {
+                if let Entry::Occupied(mut num_shards_entry) = node_num_shards.entry(previous_node_ord) {
+                    if let Some(new_num_shards) = NonZeroU32::new(num_shards_entry.get().get() - 1u32) {
+                        *num_shards_entry.get_mut() = new_num_shards;
+                    } else {
+                        num_shards_entry.remove();
+                    }
+                    // We keep the shard on the node it used to be.
+                    node_to_source_to_shard_map[previous_node_ord as usize]
+                        .entry(source_ord)
+                        .or_default()
+                        .push(shard_id);
+                    continue;
+                }
+            }
+            unassigned_shard_ids.push(shard_id);
+        }
+
+        // Finally, we need to add the missing shards.
+        for (node, num_shards) in node_num_shards {
+            assert!(unassigned_shard_ids.len() >= num_shards.get() as usize);
+            node_to_source_to_shard_map[node as usize]
+                .entry(source_ord)
+                .or_default()
+                .extend(unassigned_shard_ids.drain(..num_shards.get() as usize));
+        }
+
+        // At this point, we should have applied all of the missing shards.
+        assert!(unassigned_shard_ids.is_empty());
+    }
+
+    let mut physical_indexing_plan = PhysicalIndexingPlan::default();
+    for (node_ord, source_to_shard_map) in node_to_source_to_shard_map.into_iter().enumerate() {
+        let node_id = id_to_ord_map.indexer_id(node_ord);
+        for (source_ord, shard_ids) in source_to_shard_map {
+            let source_uid = id_to_ord_map.source_uid(source_ord);
+            let indexing_task = IndexingTask {
+                index_uid: source_uid.index_uid.to_string(),
+                source_id: source_uid.source_id.to_string(),
+                shard_ids,
+            };
+            physical_indexing_plan.add_indexing_task(node_id, indexing_task);
+        }
+    }
+    physical_indexing_plan
+}
+
+
+/// Creates a logical scheduling problem from the cluster situation.
+///
+/// The scheduling problem abstracts all notion of shard ids, source types, and node_ids,
+/// to transform scheduling into a math problem.
+///
+/// This function implementation therefore goes
+/// - 1) transform our problem into a scheduling problem. Something closer to a well-defined
+/// optimization problem. In particular this step removes:
+///   - the notion of shard ids, and only considers a number of shards being allocated.
+///   - node_ids and shard ids. These are replaced by integers.
+/// - 2) convert the current situation of the cluster into something a previous scheduling
+/// solution.
+/// - 3) compute the new scheduling solution.
+/// - 4) convert the new scheduling solution back to the real world by reallocating the shard ids.
+///
+/// TODO cut into pipelines.
+fn build_physical_indexing_plan(model: &ControlPlaneModel,
+                                indexers: &[(String, IndexerNodeInfo)],
+                                previous_plan_opt: Option<&PhysicalIndexingPlan>) -> PhysicalIndexingPlan {
+    /// TODO make the load per node something that can be configured on each node.
+
+    /// Convert our problem to a scheduling problem.
+    const LOAD_PER_NODE: Load = 1_000 * 4; // that's 4 full pipeline.
+
+    let mut id_to_ord_map = IdToOrdMap::default();
+
+    let mut indexer_max_loads: Vec<Load> = Vec::with_capacity(indexers.len());
+    for (indexer_id, _indexer) in indexers {
+        id_to_ord_map.add_indexer_id(indexer_id.clone());
+        // TODO fix me: we should get the load from the indexer config. conveyed via chitchat.
+        indexer_max_loads.push(LOAD_PER_NODE);
+    }
+
+    let mut problem = SchedulingProblem::with_node_maximum_load(indexer_max_loads);
+
+    for (source_uid, source_config) in model.get_source_configs() {
+        if !source_config.enabled {
+            continue;
+        }
+        if let Some(source_id) = populate_problem(&source_uid, source_config, model, &mut problem) {
+            let source_ord = id_to_ord_map.add_source_uid(source_uid);
+            assert_eq!(source_ord, source_id);
+        }
+    }
+
+    // Populate the previous solution.
+    let mut previous_solution = problem.new_solution();
+    if let Some(previous_plan) = previous_plan_opt {
+        convert_physical_plan_to_solution(previous_plan, &id_to_ord_map, &mut previous_solution);
+    }
+
+    // Compute the new scheduling solution
+    let (new_solution, unassigned_shards) =
+        scheduling_logic::solve(&problem, previous_solution);
+
+
+    if !unassigned_shards.is_empty() {
+        // TODO this is probably a bad idea to just not overschedule, as having a single index trail
+        // behind will prevent the log GC.
+        // A better strategy would probably be to close shard, and start prevent ingestion.
+        error!("unable to assign all sources in the cluster.");
+    }
+
+    // Convert the new scheduling solution back to a physical plan.
+    convert_scheduling_solution_to_physical_plan(
+        new_solution,
+        &id_to_ord_map,
+        model,
+        previous_plan_opt)
+}
+
 impl IndexingScheduler {
     pub fn new(
         cluster_id: String,
@@ -147,8 +419,7 @@ impl IndexingScheduler {
             warn!("No indexer available, cannot schedule an indexing plan.");
             return Ok(());
         };
-        let indexing_tasks = list_indexing_tasks(indexers.len(), model);
-        let new_physical_plan = build_physical_indexing_plan(&indexers, indexing_tasks);
+        let new_physical_plan = build_physical_indexing_plan(model, &indexers, self.state.last_applied_physical_plan.as_ref());
         if let Some(last_applied_plan) = &self.state.last_applied_physical_plan {
             let plans_diff = get_indexing_plans_diff(
                 last_applied_plan.indexing_tasks_per_node(),
@@ -279,11 +550,11 @@ impl<'a> IndexingPlansDiff<'a> {
             .sum::<usize>()
             == 0
             && self
-                .unplanned_tasks_by_node_id
-                .values()
-                .map(Vec::len)
-                .sum::<usize>()
-                == 0
+            .unplanned_tasks_by_node_id
+            .values()
+            .map(Vec::len)
+            .sum::<usize>()
+            == 0
     }
 
     pub fn is_empty(&self) -> bool {

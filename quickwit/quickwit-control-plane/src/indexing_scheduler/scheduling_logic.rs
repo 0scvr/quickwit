@@ -26,25 +26,27 @@ use super::scheduling_logic_model::*;
 // ------------------------------------------------------------------------------------
 // High level algorithm
 
-fn check_contract_conditions(problem: &Problem, solution: &Solution) {
+fn check_contract_conditions(problem: &SchedulingProblem, solution: &SchedulingSolution) {
     assert_eq!(problem.num_nodes(), solution.num_nodes());
     for (node_id, node_assignment) in solution.node_assignments.iter().enumerate() {
         assert_eq!(node_assignment.node_id, node_id);
     }
     for (source_id, source) in problem.sources().enumerate() {
-        assert_eq!(source_id as SourceId, source.source_id);
+        assert_eq!(source_id as SourceOrd, source.source_id);
     }
 }
 
-pub fn optimize_shard_placement(
-    problem: &Problem,
-    previous_solution: Solution,
-) -> (Solution, BTreeMap<SourceId, u32>) {
+pub fn solve(
+    problem: &SchedulingProblem,
+    previous_solution: SchedulingSolution,
+) -> (SchedulingSolution, BTreeMap<SourceOrd, u32>) {
     let mut solution = previous_solution;
     check_contract_conditions(problem, &solution);
     remove_extraneous_shards(problem, &mut solution);
     enforce_nodes_max_load(problem, &mut solution);
     let still_unassigned = place_unassigned_shards(problem, &mut solution);
+    // TODO ideally we should have some smarter logic here to bread first search for a better
+    // solution.
     (solution, still_unassigned)
 }
 
@@ -52,7 +54,7 @@ pub fn optimize_shard_placement(
 // Phase 1
 // Remove shards in solution that are not needed anymore
 
-fn remove_extraneous_shards(problem: &Problem, solution: &mut Solution) {
+fn remove_extraneous_shards(problem: &SchedulingProblem, solution: &mut SchedulingSolution) {
     let mut num_shards_per_source: Vec<u32> = vec![0; problem.num_sources()];
     for node_assignment in &mut solution.node_assignments {
         node_assignment.truncate_num_sources(problem.num_sources());
@@ -60,7 +62,7 @@ fn remove_extraneous_shards(problem: &Problem, solution: &mut Solution) {
             num_shards_per_source[source as usize] += load;
         }
     }
-    let num_shards_per_source_to_remove: Vec<(SourceId, u32)> = num_shards_per_source
+    let num_shards_per_source_to_remove: Vec<(SourceOrd, u32)> = num_shards_per_source
         .into_iter()
         .zip(problem.sources())
         .flat_map(|(num_shards, source)| {
@@ -73,7 +75,7 @@ fn remove_extraneous_shards(problem: &Problem, solution: &mut Solution) {
         })
         .collect();
 
-    let mut nodes_with_source: HashMap<SourceId, Vec<NodeId>> = HashMap::default();
+    let mut nodes_with_source: HashMap<SourceOrd, Vec<NodeOrd>> = HashMap::default();
     for (node_id, node_assignment) in solution.node_assignments.iter().enumerate() {
         for &source in node_assignment.num_shards_per_source.keys() {
             nodes_with_source.entry(source).or_default().push(node_id);
@@ -112,7 +114,7 @@ fn remove_extraneous_shards(problem: &Problem, solution: &mut Solution) {
     assert_remove_extraneous_shards_post_condition(problem, solution);
 }
 
-fn assert_remove_extraneous_shards_post_condition(problem: &Problem, solution: &Solution) {
+fn assert_remove_extraneous_shards_post_condition(problem: &SchedulingProblem, solution: &SchedulingSolution) {
     let mut num_shards_per_source: Vec<u32> = vec![0; problem.num_sources()];
     for node_assignment in &solution.node_assignments {
         for (&source, &load) in &node_assignment.num_shards_per_source {
@@ -128,7 +130,7 @@ fn assert_remove_extraneous_shards_post_condition(problem: &Problem, solution: &
 // Phase 2
 // Releave sources from the node that are exceeding their maximum load.
 
-fn enforce_nodes_max_load(problem: &Problem, solution: &mut Solution) {
+fn enforce_nodes_max_load(problem: &SchedulingProblem, solution: &mut SchedulingSolution) {
     for node_assignment in solution.node_assignments.iter_mut() {
         let node_max_load: Load = problem.node_max_load(node_assignment.node_id);
         enforce_node_max_load(problem, node_max_load, node_assignment);
@@ -136,7 +138,7 @@ fn enforce_nodes_max_load(problem: &Problem, solution: &mut Solution) {
 }
 
 fn enforce_node_max_load(
-    problem: &Problem,
+    problem: &SchedulingProblem,
     node_max_load: Load,
     node_assignment: &mut NodeAssignment,
 ) {
@@ -145,7 +147,7 @@ fn enforce_node_max_load(
         return;
     }
     let mut load_to_remove = total_load - node_max_load;
-    let mut load_sources: Vec<(Load, SourceId)> = node_assignment
+    let mut load_sources: Vec<(Load, SourceOrd)> = node_assignment
         .num_shards_per_source
         .iter()
         .map(|(source_id, num_shards)| {
@@ -165,7 +167,7 @@ fn enforce_node_max_load(
 }
 
 fn assert_enforce_nodes_max_load_post_condition(
-    problem: &Problem,
+    problem: &SchedulingProblem,
     node_assignment: &NodeAssignment,
 ) {
     let total_load = node_assignment.total_load(problem);
@@ -182,13 +184,13 @@ fn assert_enforce_nodes_max_load_post_condition(
 // We then try to place as many shards as possible in the node with the
 // highest load.
 
-fn place_unassigned_shards(problem: &Problem, solution: &mut Solution) -> BTreeMap<SourceId, u32> {
+fn place_unassigned_shards(problem: &SchedulingProblem, solution: &mut SchedulingSolution) -> BTreeMap<SourceOrd, u32> {
     let mut unassigned_shards: Vec<Source> = compute_unassigned_sources(problem, solution);
     unassigned_shards.sort_by_key(|source| {
         let load = source.num_shards * source.load_per_shard;
         Reverse(load)
     });
-    let mut node_with_least_loads: BinaryHeap<(Load, NodeId)> =
+    let mut node_with_least_loads: BinaryHeap<(Load, NodeOrd)> =
         compute_node_available_capacity(problem, solution);
     let mut unassignable_shards = BTreeMap::new();
     for source in unassigned_shards {
@@ -204,9 +206,9 @@ fn place_unassigned_shards(problem: &Problem, solution: &mut Solution) -> BTreeM
 }
 
 fn assert_place_unassigned_shards_post_condition(
-    problem: &Problem,
-    solution: &Solution,
-    unassigned_shards: &BTreeMap<SourceId, u32>,
+    problem: &SchedulingProblem,
+    solution: &SchedulingSolution,
+    unassigned_shards: &BTreeMap<SourceOrd, u32>,
 ) {
     // We make sure we all shard are cound as place or unassigned.
     for source in problem.sources() {
@@ -237,8 +239,8 @@ fn assert_place_unassigned_shards_post_condition(
 
 fn place_unassigned_shards_single_source(
     source: &Source,
-    node_with_least_loads: &mut BinaryHeap<(Load, NodeId)>,
-    solution: &mut Solution,
+    node_with_least_loads: &mut BinaryHeap<(Load, NodeOrd)>,
+    solution: &mut SchedulingSolution,
 ) -> u32 {
     let mut num_shards = source.num_shards;
     while num_shards > 0 {
@@ -262,10 +264,10 @@ fn place_unassigned_shards_single_source(
     num_shards
 }
 
-fn compute_unassigned_sources(problem: &Problem, solution: &Solution) -> Vec<Source> {
-    let mut unassigned_sources: BTreeMap<SourceId, Source> = problem
+fn compute_unassigned_sources(problem: &SchedulingProblem, solution: &SchedulingSolution) -> Vec<Source> {
+    let mut unassigned_sources: BTreeMap<SourceOrd, Source> = problem
         .sources()
-        .map(|source| (source.source_id as SourceId, source.clone()))
+        .map(|source| (source.source_id as SourceOrd, source.clone()))
         .collect();
     for node_assignment in &solution.node_assignments {
         for (&source_id, &num_shards) in &node_assignment.num_shards_per_source {
@@ -282,10 +284,10 @@ fn compute_unassigned_sources(problem: &Problem, solution: &Solution) -> Vec<Sou
 }
 
 fn compute_node_available_capacity(
-    problem: &Problem,
-    solution: &Solution,
-) -> BinaryHeap<(Load, NodeId)> {
-    let mut node_available_capacity: BinaryHeap<(Load, NodeId)> =
+    problem: &SchedulingProblem,
+    solution: &SchedulingSolution,
+) -> BinaryHeap<(Load, NodeOrd)> {
+    let mut node_available_capacity: BinaryHeap<(Load, NodeOrd)> =
         BinaryHeap::with_capacity(problem.num_nodes());
     for node_assignment in &solution.node_assignments {
         let available_capacity = node_assignment.node_available_capacity(problem);
@@ -301,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_remove_extranous_shards() {
-        let mut problem = Problem::with_node_maximum_load(vec![4_000, 5_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![4_000, 5_000]);
         problem.add_source(1, 1_000);
         let mut solution = problem.new_solution();
         solution.node_assignments[0].add_shard(0, 3);
@@ -313,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_remove_extranous_shards_2() {
-        let mut problem = Problem::with_node_maximum_load(vec![5_000, 4_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![5_000, 4_000]);
         problem.add_source(2, 1_000);
         let mut solution = problem.new_solution();
         solution.node_assignments[0].add_shard(0, 3);
@@ -325,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_remove_missing_sources() {
-        let mut problem = Problem::with_node_maximum_load(vec![5_000, 4_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![5_000, 4_000]);
         // Source 0
         problem.add_source(0, 1_000);
         // Source 1
@@ -343,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_truncate_sources() {
-        let mut problem = Problem::with_node_maximum_load(vec![5_000, 4_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![5_000, 4_000]);
         // Source 0
         problem.add_source(1, 1_000);
         let mut solution = problem.new_solution();
@@ -356,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_enforce_nodes_max_load() {
-        let mut problem = Problem::with_node_maximum_load(vec![5_000, 5_000, 5_000, 5_000, 7_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![5_000, 5_000, 5_000, 5_000, 7_000]);
         // Source 0
         problem.add_source(10, 3_000);
         problem.add_source(10, 2_000);
@@ -410,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_compute_unassigned_shards_simple() {
-        let mut problem = Problem::with_node_maximum_load(vec![0, 4_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![0, 4_000]);
         problem.add_source(4, 1000);
         problem.add_source(4, 1_000);
         let solution = problem.new_solution();
@@ -427,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_compute_unassigned_shards_with_non_trivial_solution() {
-        let mut problem = Problem::default();
+        let mut problem = SchedulingProblem::default();
         problem.set_node_loads(vec![50_000, 40_000]);
         problem.add_source(5, 1_000);
         problem.add_source(15, 2_000);
@@ -458,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_place_unassigned_shards_simple() {
-        let mut problem = Problem::with_node_maximum_load(vec![4_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![4_000]);
         problem.add_source(4, 1_000);
         let mut solution = problem.new_solution();
         let unassigned = place_unassigned_shards(&problem, &mut solution);
@@ -468,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_place_unassigned_shards_reach_capacity() {
-        let mut problem = Problem::with_node_maximum_load(vec![50_000, 40_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![50_000, 40_000]);
         problem.add_source(5, 1_000);
         problem.add_source(15, 2_000);
         let mut solution = problem.new_solution();
@@ -501,11 +503,11 @@ mod tests {
 
     #[test]
     fn test_solve() {
-        let mut problem = Problem::with_node_maximum_load(vec![800]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![800]);
         problem.add_source(43, 1);
         problem.add_source(379, 1);
         let previous_solution = problem.new_solution();
-        optimize_shard_placement(&problem, previous_solution);
+        solve(&problem, previous_solution);
     }
 
     fn node_max_load_strat() -> impl Strategy<Value = Load> {
@@ -525,11 +527,11 @@ mod tests {
         (num_shards(), 0u32..1_000u32)
     }
 
-    fn problem_strategy(num_nodes: usize, num_sources: usize) -> impl Strategy<Value = Problem> {
+    fn problem_strategy(num_nodes: usize, num_sources: usize) -> impl Strategy<Value = SchedulingProblem> {
         let node_max_loads_strat = proptest::collection::vec(node_max_load_strat(), num_nodes);
         let sources_strat = proptest::collection::vec(source_strat(), num_sources);
         (node_max_loads_strat, sources_strat).prop_map(|(node_max_loads, sources)| {
-            let mut problem = Problem::default();
+            let mut problem = SchedulingProblem::default();
             for (num_shards, load_per_shard) in sources {
                 problem.add_source(num_shards, load_per_shard);
             }
@@ -545,10 +547,10 @@ mod tests {
     fn initial_solution_strategy(
         num_nodes: usize,
         num_sources: usize,
-    ) -> impl Strategy<Value = Solution> {
+    ) -> impl Strategy<Value = SchedulingSolution> {
         proptest::collection::vec(node_assignments_strategy(num_sources), num_nodes).prop_map(
             move |node_assignments: Vec<Vec<u32>>| {
-                let mut solution = Solution::with_num_nodes(num_nodes);
+                let mut solution = SchedulingSolution::with_num_nodes(num_nodes);
                 for (node_id, node_assignment) in node_assignments.iter().enumerate() {
                     for (source_id, num_shards) in node_assignment.iter().copied().enumerate() {
                         if num_shards > 0 {
@@ -562,7 +564,7 @@ mod tests {
         )
     }
 
-    fn problem_solution_strategy() -> impl Strategy<Value = (Problem, Solution)> {
+    fn problem_solution_strategy() -> impl Strategy<Value = (SchedulingProblem, SchedulingSolution)> {
         ((0usize..3), (0usize..3)).prop_flat_map(move |(num_nodes, num_sources)| {
             (
                 problem_strategy(num_nodes, num_sources),
@@ -574,7 +576,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_proptest_post_conditions((problem, solution) in problem_solution_strategy()) {
-            optimize_shard_placement(&problem, solution);
+            solve(&problem, solution);
         }
     }
 }

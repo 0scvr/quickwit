@@ -17,18 +17,10 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-use std::cmp::Ordering;
-use std::num::NonZeroUsize;
 
 use fnv::FnvHashMap;
-use itertools::Itertools;
-use quickwit_common::rendezvous_hasher::sort_by_rendez_vous_hash;
 use quickwit_proto::indexing::IndexingTask;
-use quickwit_proto::metastore::SourceType;
 use serde::Serialize;
-
-use crate::control_plane_model::ControlPlaneModel;
-use crate::{IndexerNodeInfo, SourceUid};
 
 /// A [`PhysicalIndexingPlan`] defines the list of indexing tasks
 /// each indexer, identified by its node ID, should run.
@@ -40,18 +32,20 @@ pub struct PhysicalIndexingPlan {
 }
 
 impl PhysicalIndexingPlan {
-    fn new(node_ids: Vec<String>) -> Self {
-        let indexing_tasks_per_node_id = node_ids
-            .into_iter()
-            .map(|node_id| (node_id, Vec::new()))
-            .collect();
-        Self {
-            indexing_tasks_per_node_id,
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         self.indexing_tasks_per_node_id.is_empty()
+    }
+
+    pub fn node(&self, node_id: &str) -> Option<&[IndexingTask]> {
+        self.indexing_tasks_per_node_id.get(node_id)
+            .map(|tasks| tasks.as_slice())
+    }
+
+    pub fn add_indexing_task(&mut self, node_id: &str, indexing_task: IndexingTask) {
+        self.indexing_tasks_per_node_id.entry(node_id.to_string())
+            .or_default()
+            .push(indexing_task);
+
     }
 
     /// Returns the number of indexing tasks for the given node ID.
@@ -62,291 +56,17 @@ impl PhysicalIndexingPlan {
             .unwrap_or(0)
     }
 
-    fn assign_indexing_task(
-        &mut self,
-        node_id: String,
-        logical_indexing_task: LogicalIndexingTask,
-    ) {
-        let physical_indexing_task = IndexingTask {
-            index_uid: logical_indexing_task.source_uid.index_uid.to_string(),
-            source_id: logical_indexing_task.source_uid.source_id,
-            shard_ids: logical_indexing_task.shard_ids,
-        };
+    pub fn assign_indexing_task2(&mut self, node_id: String, indexing_task: IndexingTask) {
         self.indexing_tasks_per_node_id
             .entry(node_id)
             .or_default()
-            .push(physical_indexing_task);
-    }
-
-    /// Returns the number of indexing tasks for the given node ID, index ID and source ID.
-    pub fn num_indexing_tasks_for(&self, node_id: &str, index_uid: &str, source_id: &str) -> usize {
-        self.indexing_tasks_per_node_id
-            .get(node_id)
-            .map(|tasks| {
-                tasks
-                    .iter()
-                    .filter(|task| task.index_uid == index_uid && task.source_id == source_id)
-                    .count()
-            })
-            .unwrap_or(0)
+            .push(indexing_task);
     }
 
     /// Returns the hashmap of (node ID, indexing tasks).
     pub fn indexing_tasks_per_node(&self) -> &FnvHashMap<String, Vec<IndexingTask>> {
         &self.indexing_tasks_per_node_id
     }
-
-    /// Returns the mean number of indexing tasks per node. It returns 0 if there is no node.
-    pub fn num_indexing_tasks_mean_per_node(&self) -> f32 {
-        let num_nodes = self.indexing_tasks_per_node_id.len();
-        if num_nodes == 0 {
-            return 0f32;
-        }
-        self.num_indexing_tasks() as f32 / num_nodes as f32
-    }
-
-    /// Returns the mean number of indexing tasks per node.
-    fn num_indexing_tasks(&self) -> usize {
-        self.indexing_tasks_per_node_id
-            .values()
-            .map(|tasks| tasks.len())
-            .sum()
-    }
-
-    // For test only. Returns the min number of tasks on one node.
-    #[cfg(test)]
-    fn min_num_indexing_tasks_per_node(&self) -> usize {
-        self.indexing_tasks_per_node_id
-            .values()
-            .map(|tasks| tasks.len())
-            .min()
-            .unwrap_or(0)
-    }
-
-    // For test only. Returns the max number of tasks on one node.
-    #[cfg(test)]
-    fn max_num_indexing_tasks_per_node(&self) -> usize {
-        self.indexing_tasks_per_node_id
-            .values()
-            .map(|tasks| tasks.len())
-            .max()
-            .unwrap_or(0)
-    }
-}
-
-/// Builds a [`PhysicalIndexingPlan`] by assigning each indexing tasks to a node ID.
-/// The algorithm first sort indexing tasks by (index_id, source_id).
-/// Then for each indexing tasks, it performs the following steps:
-/// 1. Sort node by rendez-vous hashing to make the assignment stable (it makes it deterministic
-///    too). This is not bullet proof as the node score has an impact on the assignment too.
-/// 2. Select node candidates that can run the task, see [`select_node_candidates`] function.
-/// 3. For each node, compute a score for this task, the higher, the better, see
-///    `compute_node_score` function.
-/// 4. Select the best node (highest score) and assign the task to this node.
-/// Additional notes(fmassot): it's nice to have the cluster members as they contain the running
-/// tasks. We can potentially use this info to assign an indexing task to a node running the same
-/// task.
-pub(crate) fn build_physical_indexing_plan(
-    indexers: &[(String, IndexerNodeInfo)],
-    mut indexing_tasks: Vec<LogicalIndexingTask>,
-) -> PhysicalIndexingPlan {
-    // Sort by (index_id, source_id) to make the algorithm deterministic.
-    indexing_tasks.sort_by(|left, right| left.source_uid.cmp(&right.source_uid));
-    let mut node_ids = indexers
-        .iter()
-        .map(|indexer| indexer.0.clone())
-        .collect_vec();
-
-    // Build the plan.
-    let mut plan = PhysicalIndexingPlan::new(node_ids.clone());
-    for indexing_task in indexing_tasks {
-        sort_by_rendez_vous_hash(&mut node_ids, &indexing_task);
-        let candidates = select_node_candidates(&node_ids, &plan, &indexing_task);
-
-        // It's theoretically possible to have no candidate as all indexers can already
-        // have more than `max_num_pipelines_per_indexer` assigned for a given source.
-        // But, when building the list of indexing tasks to run on the cluster in
-        // `build_indexing_plan`, we make sure to always respect the constraint
-        // `max_num_pipelines_per_indexer` by limiting the number of indexing tasks per
-        // source.
-        let best_node_score_opt = candidates
-            .iter()
-            .rev() //< we use the reverse iterator, because in case of a tie, max picks the last element.
-            // we want the first one in order to maximize affinity.
-            .map(|&node_id| NodeScore {
-                node_id,
-                score: compute_node_score(node_id, &plan),
-            })
-            .max();
-        if let Some(best_node_score) = best_node_score_opt {
-            plan.assign_indexing_task(best_node_score.node_id.to_string(), indexing_task);
-        } else {
-            tracing::warn!(indexing_task=?indexing_task, "No indexer candidate available for the indexing task, cannot assign it to an indexer. This should not happen.");
-        };
-    }
-    plan
-}
-
-struct NodeScore<'a> {
-    node_id: &'a str,
-    score: f32,
-}
-
-impl<'a> PartialEq for NodeScore<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.score == other.score
-    }
-}
-
-impl<'a> Eq for NodeScore<'a> {}
-
-// Sort by score and then node_id.
-impl<'a> PartialOrd for NodeScore<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        (self.score, self.node_id).partial_cmp(&(other.score, other.node_id))
-    }
-}
-
-impl<'a> Ord for NodeScore<'a> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
-    }
-}
-
-/// Returns node candidates IDs that can run the given [`IndexingTask`].
-/// The selection is overly simple: a node will match unless it has
-/// been already assigned the `max_num_pipelines_per_indexer` of tasks for
-/// the given (index ID, source ID).
-fn select_node_candidates<'a>(
-    node_ids: &'a [String],
-    physical_plan: &PhysicalIndexingPlan,
-    indexing_task: &LogicalIndexingTask,
-) -> Vec<&'a str> {
-    let index_uid_str: String = indexing_task.source_uid.index_uid.to_string();
-    node_ids
-        .iter()
-        .map(String::as_str)
-        .filter(|node_id| {
-            physical_plan.num_indexing_tasks_for(
-                node_id,
-                &index_uid_str,
-                &indexing_task.source_uid.source_id,
-            ) < indexing_task.max_num_pipelines_per_indexer.get()
-        })
-        .collect_vec()
-}
-
-/// Lame scoring function for a given node ID defined by
-/// `score = indexing_tasks_per_node_mean - num_indexing_tasks_for_given_node`.
-/// The lower the number of tasks, the higher the score will be.
-// TODO: introduce other criteria.
-fn compute_node_score(node_id: &str, physical_plan: &PhysicalIndexingPlan) -> f32 {
-    physical_plan.num_indexing_tasks_mean_per_node()
-        - physical_plan.num_indexing_tasks_for_node(node_id) as f32
-}
-
-impl From<IndexingTask> for SourceUid {
-    fn from(indexing_task: IndexingTask) -> Self {
-        Self {
-            index_uid: indexing_task.index_uid.into(),
-            source_id: indexing_task.source_id,
-        }
-    }
-}
-
-#[derive(Hash, Debug, Clone, Eq, PartialEq)]
-pub(crate) struct LogicalIndexingTask {
-    pub source_uid: SourceUid,
-    pub shard_ids: Vec<u64>,
-    pub max_num_pipelines_per_indexer: NonZeroUsize,
-}
-
-/// Builds the indexing plan = `[Vec<IndexingTask]` from the given sources,
-/// that should run on the cluster.
-/// The plan building algorithm follows these rules:
-/// - For each source, `num_tasks` are added to the plan with `num_tasks =
-///   min(desired_num_pipelines`, `max_num_pipelines_per_indexer * num_indexers)`. The `min` ensures
-///   that a cluster is always able to run all the tasks.
-/// - For the ingest API source, it creates one indexing task per indexer. Indeed, an indexer is not
-///   able to forward documents received by the ingest API to the indexer that is running the
-///   corresponding indexing pipeline. To make ingestion easier for the user, we starts ingest
-///   pipelines on all indexers. TODO(fmassot): remove this rule once Quickwit has the ability to
-///   forward documents to the right indexers.
-/// - Ignore disabled sources, `CLI_INGEST_SOURCE_ID` and files sources (Quickwit is not aware of
-///   the files locations and thus are ignored).
-pub(crate) fn list_indexing_tasks(
-    num_indexers: usize,
-    model: &ControlPlaneModel,
-) -> Vec<LogicalIndexingTask> {
-    let mut indexing_tasks: Vec<LogicalIndexingTask> = Vec::new();
-    for (source_uid, source_config) in model
-        .get_source_configs()
-        .sorted_by(|(left, _), (right, _)| left.cmp(right))
-    {
-        if !source_config.enabled {
-            continue;
-        }
-        match source_config.source_type() {
-            SourceType::Cli | SourceType::File | SourceType::Vec | SourceType::Void => {
-                continue;
-            }
-            SourceType::IngestV1 => {
-                let logical_indexing_task = LogicalIndexingTask {
-                    source_uid: source_uid.clone(),
-                    shard_ids: Vec::new(),
-                    max_num_pipelines_per_indexer: source_config.max_num_pipelines_per_indexer,
-                };
-                // TODO fix that ugly logic.
-                indexing_tasks.extend(std::iter::repeat(logical_indexing_task).take(num_indexers));
-            }
-            SourceType::IngestV2 => {
-                // TODO for the moment for ingest v2 we create one indexing task with all of the
-                // shards. We probably want to have something more unified between
-                // IngestV2 and kafka-alike... e.g. one indexing task with a bunch
-                // of weighted shards, one indexing task.
-                //
-                // The construction of the physical plan would then have to split that into more
-                // chewable physical tasks (one per pipeline, one per reasonable
-                // subset of shards).
-
-                // TODO: More precisely, we want the shards that are open or closing or such that
-                // `shard.publish_position_inclusive`
-                // < `shard.replication_position_inclusive`.
-                // let list_shard_subrequest = ListShardsSubrequest {
-                //     index_uid: source_uid.index_uid.clone().into(),
-                //     source_id: source_uid.source_id.clone(),
-                //     shard_state: None,
-                // };
-                let shard_ids = model.list_shards(&source_uid);
-                let indexing_task = LogicalIndexingTask {
-                    source_uid: source_uid.clone(),
-                    shard_ids,
-                    max_num_pipelines_per_indexer: source_config.max_num_pipelines_per_indexer,
-                };
-                indexing_tasks.push(indexing_task);
-            }
-            SourceType::Kafka
-            | SourceType::Kinesis
-            | SourceType::GcpPubsub
-            | SourceType::Nats
-            | SourceType::Pulsar => {
-                let num_pipelines =
-                    // The num desired pipelines is constrained by the number of indexer and the maximum
-                    // of pipelines that can run on each indexer.
-                    std::cmp::min(
-                    source_config.desired_num_pipelines.get(),
-                    source_config.max_num_pipelines_per_indexer.get() * num_indexers,
-                    );
-                let logical_indexing_task = LogicalIndexingTask {
-                    source_uid: source_uid.clone(),
-                    shard_ids: Vec::new(),
-                    max_num_pipelines_per_indexer: source_config.max_num_pipelines_per_indexer,
-                };
-                indexing_tasks.extend(std::iter::repeat(logical_indexing_task).take(num_pipelines));
-            }
-        }
-    }
-    indexing_tasks
 }
 
 #[cfg(test)]
@@ -369,9 +89,8 @@ mod tests {
     use serde_json::json;
     use tonic::transport::Endpoint;
 
-    use super::{build_physical_indexing_plan, SourceUid};
+    use super::{SourceUid};
     use crate::control_plane_model::ControlPlaneModel;
-    use crate::indexing_plan::{list_indexing_tasks, LogicalIndexingTask};
     use crate::IndexerNodeInfo;
 
     fn kafka_source_params_for_test() -> SourceParams {

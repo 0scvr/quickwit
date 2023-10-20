@@ -19,61 +19,60 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
-pub type SourceId = u32;
-pub type NodeId = usize;
+pub type SourceOrd = u32;
+pub type NodeOrd = usize;
 pub type Load = u32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
-    pub source_id: SourceId,
+    pub source_id: SourceOrd,
     pub load_per_shard: Load,
     pub num_shards: u32,
 }
 
 #[derive(Default, Debug)]
-pub struct Problem {
+pub struct SchedulingProblem {
     sources: Vec<Source>,
     node_max_loads: Vec<Load>,
 }
 
-impl Problem {
-    pub fn new_solution(&self) -> Solution {
-        Solution::with_num_nodes(self.node_max_loads.len())
+impl SchedulingProblem {
+    pub fn new_solution(&self) -> SchedulingSolution {
+        SchedulingSolution::with_num_nodes(self.node_max_loads.len())
     }
 
-    pub fn node_max_load(&self, node_id: NodeId) -> Load {
+    pub fn node_max_load(&self, node_id: NodeOrd) -> Load {
         self.node_max_loads[node_id]
     }
 
-    pub fn with_node_maximum_load(node_max_loads: Vec<Load>) -> Problem {
-        Problem {
+    pub fn with_node_maximum_load(node_max_loads: Vec<Load>) -> SchedulingProblem {
+        SchedulingProblem {
             sources: Vec::new(),
             node_max_loads,
         }
     }
-    pub fn set_node_loads(&mut self, node_max_loads: Vec<Load>) {
-        self.node_max_loads = node_max_loads;
-    }
-
+    
     pub fn sources(&self) -> impl Iterator<Item = Source> + '_ {
         self.sources.iter().copied()
     }
 
-    pub fn source(&self, source_id: SourceId) -> Source {
+    pub fn source(&self, source_id: SourceOrd) -> Source {
         self.sources[source_id as usize]
     }
 
-    pub fn add_source(&mut self, num_shards: u32, load_per_shard: Load) {
-        let source_id = self.sources.len() as SourceId;
+    pub fn add_source(&mut self, num_shards: u32, load_per_shard: Load) -> SourceOrd {
+        let source_id = self.sources.len() as SourceOrd;
         self.sources.push(Source {
             source_id,
             num_shards,
             load_per_shard,
         });
+        source_id
     }
 
-    pub fn source_load_per_shard(&self, source_id: SourceId) -> Load {
+    pub fn source_load_per_shard(&self, source_id: SourceOrd) -> Load {
         self.sources[source_id as usize].load_per_shard
     }
 
@@ -88,19 +87,19 @@ impl Problem {
 
 #[derive(Clone, Debug)]
 pub struct NodeAssignment {
-    pub node_id: NodeId,
-    pub num_shards_per_source: BTreeMap<SourceId, u32>,
+    pub node_id: NodeOrd,
+    pub num_shards_per_source: BTreeMap<SourceOrd, u32>,
 }
 
 impl NodeAssignment {
-    pub fn new(node_id: NodeId) -> NodeAssignment {
+    pub fn new(node_id: NodeOrd) -> NodeAssignment {
         NodeAssignment {
             node_id,
             num_shards_per_source: Default::default(),
         }
     }
 
-    pub fn node_available_capacity(&self, problem: &Problem) -> Load {
+    pub fn node_available_capacity(&self, problem: &SchedulingProblem) -> Load {
         problem.node_max_loads[self.node_id as usize].saturating_sub(self.total_load(problem))
     }
 
@@ -114,14 +113,14 @@ impl NodeAssignment {
         }
     }
 
-    pub fn total_load(&self, problem: &Problem) -> Load {
+    pub fn total_load(&self, problem: &SchedulingProblem) -> Load {
         self.num_shards_per_source
             .iter()
             .map(|(source_id, num_shards)| problem.source_load_per_shard(*source_id) * num_shards)
             .sum()
     }
 
-    pub fn num_shards(&self, source_id: SourceId) -> u32 {
+    pub fn num_shards(&self, source_id: SourceOrd) -> u32 {
         self.num_shards_per_source
             .get(&source_id)
             .copied()
@@ -149,18 +148,29 @@ impl NodeAssignment {
 }
 
 #[derive(Clone, Debug)]
-pub struct Solution {
+pub struct SchedulingSolution {
     pub node_assignments: Vec<NodeAssignment>,
 }
 
-impl Solution {
-    pub(crate) fn with_num_nodes(num_nodes: usize) -> Solution {
-        Solution {
+impl SchedulingSolution {
+    pub(crate) fn with_num_nodes(num_nodes: usize) -> SchedulingSolution {
+        SchedulingSolution {
             node_assignments: (0..num_nodes).map(NodeAssignment::new).collect(),
         }
     }
 
     pub fn num_nodes(&self) -> usize {
         self.node_assignments.len()
+    }
+
+    pub fn node_shards<'a>(&'a self, source_ord: SourceOrd) -> impl Iterator<Item=(NodeOrd, NonZeroU32)> + 'a {
+        self.node_assignments
+            .iter()
+            .filter_map(move |node_assignment| {
+                let num_shards: NonZeroU32 = node_assignment.num_shards_per_source.get(&source_ord)
+                    .copied()
+                    .and_then(NonZeroU32::new)?;
+                Some((node_assignment.node_id, num_shards))
+            })
     }
 }
