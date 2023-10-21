@@ -32,7 +32,7 @@ pub struct Source {
     pub num_shards: u32,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct SchedulingProblem {
     sources: Vec<Source>,
     node_max_loads: Vec<Load>,
@@ -53,7 +53,7 @@ impl SchedulingProblem {
             node_max_loads,
         }
     }
-    
+
     pub fn sources(&self) -> impl Iterator<Item = Source> + '_ {
         self.sources.iter().copied()
     }

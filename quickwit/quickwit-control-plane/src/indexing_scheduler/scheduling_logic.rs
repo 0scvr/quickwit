@@ -429,8 +429,7 @@ mod tests {
 
     #[test]
     fn test_compute_unassigned_shards_with_non_trivial_solution() {
-        let mut problem = SchedulingProblem::default();
-        problem.set_node_loads(vec![50_000, 40_000]);
+        let mut problem = SchedulingProblem::with_node_maximum_load(vec![50_000, 40_000]);
         problem.add_source(5, 1_000);
         problem.add_source(15, 2_000);
         let mut solution = problem.new_solution();
@@ -531,11 +530,10 @@ mod tests {
         let node_max_loads_strat = proptest::collection::vec(node_max_load_strat(), num_nodes);
         let sources_strat = proptest::collection::vec(source_strat(), num_sources);
         (node_max_loads_strat, sources_strat).prop_map(|(node_max_loads, sources)| {
-            let mut problem = SchedulingProblem::default();
+            let mut problem = SchedulingProblem::with_node_maximum_load(node_max_loads);
             for (num_shards, load_per_shard) in sources {
                 problem.add_source(num_shards, load_per_shard);
             }
-            problem.set_node_loads(node_max_loads);
             problem
         })
     }
